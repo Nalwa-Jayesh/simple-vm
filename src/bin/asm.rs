@@ -1,6 +1,6 @@
 use std::{env, io};
 use std::fs::File;
-use std::io::BufRead;
+use std::io::{BufRead, Write};
 use std::path::Path;
 
 fn main() -> Result<(), String> {
@@ -16,4 +16,7 @@ fn main() -> Result<(), String> {
             output.push(b);
         }
     }
+    let mut stdout = io::stdout().lock();
+    stdout.write_all(&output).map_err(|x| format!("failed to write to stdout: {}", x))?;
+    Ok(())
 }
