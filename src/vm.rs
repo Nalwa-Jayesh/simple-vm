@@ -1,4 +1,4 @@
-
+use std::collections::HashMap;
 use crate::memory::{LinearMemory, Addressable};
 
 #[derive(Debug)]
@@ -31,6 +31,7 @@ pub enum Op {
     PopRegister(Register),
     AddStack,
     AddRegister(Register, Register),
+    Signal(u8),
 }
 
 impl Op {
@@ -39,12 +40,16 @@ impl Op {
     }
 }
 
+fn parse_instruction_arg(ins: u16) -> u8 {
+    ((ins & 0xff00) >> 8) as u8
+}
+
 fn parse_instruction(ins: u16) -> Result<Op, String> {
     let op = (ins & 0xff) as u8;
     match op {
         x if x == Op::Nop.value() => Ok(Op::Nop),
         x if x == Op::Push(0).value() => {
-            let arg = (ins & 0xff00) >> 8;
+            let arg = parse_instruction_arg(ins);
             Ok(Op::Push(arg as u8))
         },
         x if x == Op::PopRegister(Register::A).value() => {
@@ -56,12 +61,20 @@ fn parse_instruction(ins: u16) -> Result<Op, String> {
         x if x == Op::AddStack.value() => {
             Ok(Op::AddStack)
         },
+        x if x == Op::Signal(0).value() => {
+            let arg = parse_instruction_arg(ins);
+            Ok(Op::Signal(arg))
+        },
         _ => Err(format!("Unknown op: 0x{:X}", op))
     }
 }
 
+type SignalFunction = fn(&mut Machine) -> Result<(), String>;
+
 pub struct Machine {
     registers: [u16; 8],
+    signal_handlers: HashMap<u8, SignalFunction>,
+    pub halt: bool,
     pub memory: Box<dyn Addressable>,
 }
 
@@ -69,6 +82,8 @@ impl Machine {
     pub fn new() -> Self {
         Self {
             registers: [0; 8],
+            signal_handlers: HashMap::new(),
+            halt: false,
             memory: Box::new(LinearMemory::new(8*1024)),
         }
     }
@@ -76,6 +91,11 @@ impl Machine {
     pub fn get_register(&self, r: Register) -> u16 {
         self.registers[r as usize]
     }
+
+    pub fn define_handler(&mut self, index: u8, f: SignalFunction) {
+        self.signal_handlers.insert(index, f);
+    }
+
     pub fn pop(&mut self) -> Result<u16, String> {
         let sp = self.registers[Register::SP as usize] - 2;
         if let Some(v) = self.memory.read2(sp) {
@@ -97,7 +117,7 @@ impl Machine {
 
     pub fn step(&mut self) -> Result<(), String> {
         let pc = self.registers[Register::PC as usize];
-        let instruction = self.memory.read2(pc).unwrap();
+        let instruction = self.memory.read2(pc).ok_or(format!("pc read fail @ 0x{:X}", pc))?;
         self.registers[Register::PC as usize] = pc + 2;
 
         let op = parse_instruction(instruction)?;
@@ -120,6 +140,11 @@ impl Machine {
                 self.registers[r1 as usize] += self.registers[r2 as usize];
                 Ok(())
             },
+            Op::Signal(signal) => {
+                let sig_fn = self.signal_handlers.get(&signal)
+                    .ok_or(format!("Unknown signal: 0x{:X}", signal))?;
+                sig_fn(self)
+            }
             // _ => Err(format!("unknown operator: {:?}", op)),
         }
     }
