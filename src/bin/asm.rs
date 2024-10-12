@@ -8,10 +8,11 @@ fn main() -> Result<(), String> {
     if args.len() != 2 {
         panic!("usage: {} <input>", args[0]);
     }
-    let output: Vec<u8> = Vec::new();
     let file = File::open(Path::new(&args[1])).map_err(|x| format!("failed to open: {}", x))?;
+    let mut output: Vec<u8> = Vec::new();
     for line in io::BufReader::new(file).lines() {
-        for t in line.split(" ").filter(|x| x.len() == 0) {
+        let inner_line = line.map_err(|_x| "foo")?;
+        for t in inner_line.split(" ").filter(|x| x.len() > 0) {
             let b = u8::from_str_radix(t, 16).map_err(|x| format!("parse int: {}", x))?;
             output.push(b);
         }
