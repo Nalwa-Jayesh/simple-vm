@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use crate::register::Register;
 #[derive(Debug)]
 pub enum Instruction {
@@ -37,6 +38,53 @@ impl Instruction {
     }
 }
 
+fn parse_instruction_arg(ins: u16) -> u8 {
+    ((ins & 0xff00) >> 8) as u8
+}
+
+impl TryFrom<u16> for Instruction {
+    type Error = String;
+    fn try_from(ins: u16) -> Result<Instruction, String> {
+        let op = (ins & 0xff) as u8;
+        match OpCode::try_from(op)? {
+            OpCode::Nop => Ok(Instruction::Nop),
+            OpCode::Push => {
+                let arg = parse_instruction_arg(ins);
+                Ok(Instruction::Push(arg))
+            },
+            OpCode::PopRegister => {
+                let reg = (ins & 0xff00) >> 8;
+                Register::from_u8(reg as u8)
+                    .ok_or(format!("Invalid register: 0x{:X}", reg))
+                    .map(|r| Instruction::PopRegister(r))
+            },
+            OpCode::PushRegister => {
+                let reg = (ins & 0xff00) >> 8;
+                Register::from_u8(reg as u8)
+                    .ok_or(format!("Invalid register: 0x{:X}", reg))
+                    .map(|r| Instruction::PushRegister(r))
+            },
+            OpCode::AddStack => {
+                Ok(Instruction::AddStack)
+            },
+            OpCode::AddRegister => {
+                let reg1_raw = (ins & 0xf00) >> 8;
+                let reg2_raw = (ins & 0xf000) >> 12;
+                let reg1 = Register::from_u8(reg1_raw as u8)
+                    .ok_or(format!("unknown register: 0x{:X}", reg1_raw))?;
+                let reg2 = Register::from_u8(reg2_raw as u8)
+                    .ok_or(format!("unknown register: 0x{:X}", reg2_raw))?;
+                Ok(Instruction::AddRegister(reg1, reg2))
+            },
+            OpCode::Signal => {
+                let arg = parse_instruction_arg(ins);
+                Ok(Instruction::Signal(arg))
+            },
+            // _ => Err(format!("Unknown op: 0x{:X}", op))
+        }
+    }
+}
+
 #[repr(u8)]
 #[derive(Debug)]
 pub enum OpCode {
@@ -49,31 +97,34 @@ pub enum OpCode {
     AddRegister = 0x11,
 }
 
-impl OpCode {
-
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for OpCode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "Nop" => Some(OpCode::Nop),
-            "Push" => Some(OpCode::Push),
-            "PopRegister" => Some(OpCode::PopRegister),
-            "PushRegister" => Some(OpCode::PushRegister),
-            "AddRegister" => Some(OpCode::AddRegister),
-            "AddStack" => Some(OpCode::AddStack),
-            "Signal" => Some(OpCode::Signal),
-            _ => None,
+            "Nop" => Ok(Self::Nop),
+            "Push" => Ok(Self::Push),
+            "PopRegister" => Ok(Self::PopRegister),
+            "PushRegister" => Ok(Self::PushRegister),
+            "AddRegister" => Ok(Self::AddRegister),
+            "AddStack" => Ok(Self::AddStack),
+            "Signal" => Ok(Self::Signal),
+            _ => Err(format!("Unknown opcode {}", s)),
         }
     }
+}
 
-    pub fn from_u8(b: u8) -> Option<Self> {
+impl TryFrom<u8> for OpCode {
+    type Error = String;
+    fn try_from(b: u8) -> Result<Self, Self::Error> {
         match b {
-            x if x == Self::Nop as u8 => Some(Self::Nop),
-            x if x == Self::Push as u8 => Some(Self::Push),
-            x if x == Self::PopRegister as u8 => Some(Self::PopRegister),
-            x if x == Self::PushRegister as u8 => Some(Self::PushRegister),
-            x if x == Self::AddStack as u8 => Some(Self::AddStack),
-            x if x == Self::AddRegister as u8 => Some(Self::AddRegister),
-            x if x == Self::Signal as u8 => Some(Self::Signal),
-            _ => None,
+            x if x == Self::Nop as u8 => Ok(Self::Nop),
+            x if x == Self::Push as u8 => Ok(Self::Push),
+            x if x == Self::PopRegister as u8 => Ok(Self::PopRegister),
+            x if x == Self::PushRegister as u8 => Ok(Self::PushRegister),
+            x if x == Self::AddStack as u8 => Ok(Self::AddStack),
+            x if x == Self::AddRegister as u8 => Ok(Self::AddRegister),
+            x if x == Self::Signal as u8 => Ok(Self::Signal),
+            _ => Err(format!("unknown opcode: {:X}", b)),
         }
     }
 }
