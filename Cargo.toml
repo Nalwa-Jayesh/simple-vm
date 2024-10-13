@@ -10,3 +10,6 @@ name = "vm"
 
 [[bin]]
 name = "asm"
+
+[dependencies.macros]
+path = "lib/macros"

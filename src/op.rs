@@ -1,13 +1,23 @@
 use std::str::FromStr;
+
+use macros::{VmInstruction};
 use crate::register::Register;
-#[derive(Debug)]
+
+#[derive(Debug, VmInstruction)]
 pub enum Instruction {
+    #[opcode(0x0)]
     Nop,
+    #[opcode(0x1)]
     Push(u8),
+    #[opcode(0x2)]
     PopRegister(Register),
-    AddStack,
-    AddRegister(Register, Register),
+    #[opcode(0x3)]
     PushRegister(Register),
+    #[opcode(0x20)]
+    AddStack,
+    #[opcode(0x21)]
+    AddRegister(Register, Register),
+    #[opcode(0xF0)]
     Signal(u8),
 }
 
@@ -80,51 +90,8 @@ impl TryFrom<u16> for Instruction {
                 let arg = parse_instruction_arg(ins);
                 Ok(Instruction::Signal(arg))
             },
-            // _ => Err(format!("Unknown op: 0x{:X}", op))
         }
     }
 }
 
-#[repr(u8)]
-#[derive(Debug)]
-pub enum OpCode {
-    Nop = 0x0,
-    Push = 0x1,
-    PopRegister =  0x2,
-    PushRegister =  0x3,
-    Signal = 0x0f,
-    AddStack = 0x10,
-    AddRegister = 0x11,
-}
 
-impl FromStr for OpCode {
-    type Err = String;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "Nop" => Ok(Self::Nop),
-            "Push" => Ok(Self::Push),
-            "PopRegister" => Ok(Self::PopRegister),
-            "PushRegister" => Ok(Self::PushRegister),
-            "AddRegister" => Ok(Self::AddRegister),
-            "AddStack" => Ok(Self::AddStack),
-            "Signal" => Ok(Self::Signal),
-            _ => Err(format!("Unknown opcode {}", s)),
-        }
-    }
-}
-
-impl TryFrom<u8> for OpCode {
-    type Error = String;
-    fn try_from(b: u8) -> Result<Self, Self::Error> {
-        match b {
-            x if x == Self::Nop as u8 => Ok(Self::Nop),
-            x if x == Self::Push as u8 => Ok(Self::Push),
-            x if x == Self::PopRegister as u8 => Ok(Self::PopRegister),
-            x if x == Self::PushRegister as u8 => Ok(Self::PushRegister),
-            x if x == Self::AddStack as u8 => Ok(Self::AddStack),
-            x if x == Self::AddRegister as u8 => Ok(Self::AddRegister),
-            x if x == Self::Signal as u8 => Ok(Self::Signal),
-            _ => Err(format!("unknown opcode: {:X}", b)),
-        }
-    }
-}
