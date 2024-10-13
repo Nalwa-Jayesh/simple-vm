@@ -1,5 +1,5 @@
 use std::str::FromStr;
-
+use std::fmt;
 use macros::{VmInstruction};
 use crate::register::Register;
 
@@ -21,7 +21,7 @@ pub enum Instruction {
     Signal(u8),
 }
 
-impl Instruction {
+/*impl Instruction {
     fn encode_r1(r: Register) -> u16 {
         (r as u16)&0xf << 8
     }
@@ -92,6 +92,6 @@ impl TryFrom<u16> for Instruction {
             },
         }
     }
-}
+}*/
 
 

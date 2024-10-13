@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum Register {
@@ -16,6 +18,21 @@ impl Register {
             x if x == Register::BP as u8 => Some(Register::BP),
             x if x == Register::FLAGS as u8 => Some(Register::FLAGS),
             _ => None,
+        }
+    }
+}
+
+impl fmt::Display for Register {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Register::A => write!(f, "A"),
+            Register::B => write!(f, "B"),
+            Register::C => write!(f, "C"),
+            Register::M => write!(f, "M"),
+            Register::SP => write!(f, "SP"),
+            Register::PC => write!(f, "PC"),
+            Register::BP => write!(f, "BP"),
+            Register::FLAGS => write!(f, "FLAGS"),
         }
     }
 }
