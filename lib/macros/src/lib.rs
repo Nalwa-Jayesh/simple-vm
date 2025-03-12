@@ -11,8 +11,8 @@ pub fn generate_stringy_enum_impls(input: TokenStream) -> TokenStream {
 }
 
 fn impl_stringy_enum(ast: &syn::ItemEnum) -> Result<proc_macro2::TokenStream, String> {
-    let mut to_string = quote!{};
-    let mut from_string = quote!{};
+    let mut to_string = quote! {};
+    let mut from_string = quote! {};
     let type_name = &ast.ident;
     for x in ast.variants.iter() {
         let name = &x.ident;
@@ -20,9 +20,12 @@ fn impl_stringy_enum(ast: &syn::ItemEnum) -> Result<proc_macro2::TokenStream, St
             to_string.extend(quote!(Self::#name => write!(f, "{}", stringify!(#name)),));
             from_string.extend(quote!(stringify!(#name) => Ok(Self::#name),));
         } else {
-            return Err(format!("all enum variants must be unit. got {}", stringify!(#name)));
+            return Err(format!(
+                "all enum variants must be unit. got {}",
+                stringify!(#name)
+            ));
         }
-    };
+    }
     Ok(quote! {
         impl FromStr for #type_name {
             type Err = String;
@@ -97,13 +100,13 @@ fn impl_opcode_struct(ast: &syn::ItemEnum) -> Result<proc_macro2::TokenStream, S
         let opcode_value = variant_opcode_value(x);
         if let syn::Fields::Unit = &x.fields {
             field_u16_encodings.extend(quote! {
-                Self::#name => #opcode_value as u16
+                Self::#name => #opcode_value as u16,
             });
             field_u16_decodings.extend(quote! {
-                #opcode_value => Ok(Self::#name)
+                #opcode_value => Ok(Self::#name),
             });
             field_to_string.extend(quote! {
-                Self::#name => write!(f, stringify!(#name))
+                Self::#name => write!(f, stringify!(#name)),
             });
             field_from_str.extend(quote! {
                 stringify!(#name) => {
@@ -159,15 +162,11 @@ fn impl_opcode_struct(ast: &syn::ItemEnum) -> Result<proc_macro2::TokenStream, S
                             op_parts[#i] = ((#argname.value&0xf)as u16) | (((#argname.value as u16)&0x70) << 5);
                         });
                         part_decoders.extend(quote!{
-                            let #argname = Literal7Bit::new(((ins&0xf) as u8) | (((ins&0xe00)>>5) as u8));
+                            let #argname = Literal7Bit::new_checked(((ins&0xf) as u8) | (((ins&0xe00)>>5) as u8))?;
                         });
                         part_stringers.extend(quote!{
-                            let #argname = Literal7Bit::new(Instruction::parse_numeric(&parts[#part_index]).map_err(|_| {
-                                Self::Err::Fail(format!("invalid number {}", parts[2]))
-                            })? as u8);
-                            if #argname.value > 0x7f {
-                                return Err(Self::Err::Fail(format!("7bit literal out of range {}", parts[2])))
-                            };
+                            let (part, radix) = Instruction::pre_handle_number(&parts[#part_index]).map_err(|x| Self::Err::Fail(x))?;
+                            let #argname = Literal7Bit::from_str_radix(part, radix).map_err(|x| Self::Err::Fail(x))?;
                         });
                     }
                     ("Literal10Bit", i) => {
@@ -178,15 +177,25 @@ fn impl_opcode_struct(ast: &syn::ItemEnum) -> Result<proc_macro2::TokenStream, S
                                 | ((#argname.value&0x0380 as u16) << 5);
                         });
                         part_decoders.extend(quote!{
-                            let #argname = Literal10Bit::new(((ins&0xf) as u16) | (((ins&0xe00)>>5) as u16) | (((ins&0x7000)>>5) as u16));
+                            let #argname = Literal10Bit::new_checked(((ins&0xf) as u16) | (((ins&0xe00)>>5) as u16) | (((ins&0x7000)>>5) as u16))?;
                         });
                         part_stringers.extend(quote!{
-                            let #argname = Literal10Bit::new(Instruction::parse_numeric(&parts[#part_index]).map_err(|_| {
-                                Self::Err::Fail(format!("invalid number {}", parts[2]))
-                            })?);
-                            if #argname.value > 0x3ff {
-                                return Err(Self::Err::Fail(format!("10bit literal out of range {}", parts[2])))
-                            };
+                            let (part, radix) = Instruction::pre_handle_number(&parts[#part_index]).map_err(|x| Self::Err::Fail(x))?;
+                            let #argname = Literal10Bit::from_str_radix(part, radix).map_err(|x| Self::Err::Fail(x))?;
+                        });
+                    }
+                    ("Literal12Bit", i) => {
+                        let argname = get_arg_name(i)?;
+                        let part_index = i + 1;
+                        part_encoders.extend(quote! {
+                            op_parts[#i] = #argname.value&0xfff;
+                        });
+                        part_decoders.extend(quote! {
+                            let #argname = Literal12Bit::new_checked(ins&0xfff)?;
+                        });
+                        part_stringers.extend(quote!{
+                            let (part, radix) = Instruction::pre_handle_number(&parts[#part_index]).map_err(|x| Self::Err::Fail(x))?;
+                            let #argname = Literal12Bit::from_str_radix(part, radix).map_err(|x| Self::Err::Fail(x))?;
                         });
                     }
                     ("Nibble", i) => {
@@ -196,15 +205,11 @@ fn impl_opcode_struct(ast: &syn::ItemEnum) -> Result<proc_macro2::TokenStream, S
                             op_parts[#i] = (#argname.value as u16)&0xf;
                         });
                         part_decoders.extend(quote! {
-                            let #argname = Nibble::new((ins&0xf) as u8);
+                            let #argname = Nibble::new_checked((ins&0xf) as u8)?;
                         });
                         part_stringers.extend(quote!{
-                            let #argname = Nibble::new(Instruction::parse_numeric(&parts[#part_index]).map_err(|_| {
-                                Self::Err::Fail(format!("invalid number {}", parts[2]))
-                            })? as u8);
-                            if #argname.value > 0xf {
-                                return Err(Self::Err::Fail(format!("nibble out of range {}", parts[2])))
-                            };
+                            let (part, radix) = Instruction::pre_handle_number(&parts[#part_index]).map_err(|x| Self::Err::Fail(x))?;
+                            let #argname = Nibble::from_str_radix(part, radix).map_err(|x| Self::Err::Fail(x))?;
                         });
                     }
                     ("TestOp", i) => {
@@ -216,7 +221,7 @@ fn impl_opcode_struct(ast: &syn::ItemEnum) -> Result<proc_macro2::TokenStream, S
                         part_decoders.extend(quote! {
                             let #argname = TestOp::try_from(ins&0xf)?;
                         });
-                        part_stringers.extend(quote!{
+                        part_stringers.extend(quote! {
                             let #argname = TestOp::from_str(&parts[#part_index]).map_err(|x| {
                                 Self::Err::Fail(x)
                             })?;
@@ -231,24 +236,10 @@ fn impl_opcode_struct(ast: &syn::ItemEnum) -> Result<proc_macro2::TokenStream, S
                         part_decoders.extend(quote! {
                             let #argname = StackOp::try_from(ins&0xf)?;
                         });
-                        part_stringers.extend(quote!{
+                        part_stringers.extend(quote! {
                             let #argname = StackOp::from_str(&parts[#part_index]).map_err(|x| {
                                 Self::Err::Fail(x)
                             })?;
-                        });
-                    }
-                    ("u16", i) => {
-                        let argname = get_arg_name(i)?;
-                        let part_index = i + 1;
-                        part_encoders.extend(quote!(op_parts[#i] = #argname&0xfff;));
-                        part_decoders.extend(quote!(let #argname = ins&0xfff;));
-                        part_stringers.extend(quote!{
-                            let #argname = Instruction::parse_numeric(&parts[#part_index]).map_err(|_| {
-                                Self::Err::Fail(format!("invalid number {}", parts[2]))
-                            })?;
-                            if #argname > 0xfff {
-                                return Err(Self::Err::Fail(format!("number out of range {}", parts[2])))
-                            };
                         });
                     }
                     (_, _) => {
@@ -336,6 +327,18 @@ fn impl_opcode_struct(ast: &syn::ItemEnum) -> Result<proc_macro2::TokenStream, S
                 }
             }
 
+            pub fn pre_handle_number(s: &str) -> Result<(&str, u32), String> {
+                if s.len() == 0 {
+                    return Err("string has no length".to_string());
+                }
+                let fst = s.chars().nth(0).unwrap();
+                Ok(match fst {
+                    '$' => (&s[1..], 16),
+                    '%' => (&s[1..], 2),
+                    _ => (s, 10)
+                })
+            }
+
             fn parse_numeric(s: &str) -> Result<u16, String> {
                 if s.len() == 0 {
                     return Err("string has no length".to_string());
@@ -361,6 +364,16 @@ fn impl_opcode_struct(ast: &syn::ItemEnum) -> Result<proc_macro2::TokenStream, S
                 };
                 i16::from_str_radix(num, radix).map_err(|x| format!("{}", x))
             }
+
+            fn result_join<A,B,E>(left: Result<A, E>, right: Result<B, E>) -> Result<Result<A,B>, E> {
+                match left {
+                    Ok(a) => Ok(Ok(a)),
+                    Err(_) => match right {
+                        Ok(b) => Ok(Err(b)),
+                        Err(e2) => Err(e2),
+                    }
+                }
+            }
         }
 
         impl TryFrom<u16> for Instruction {
@@ -377,7 +390,8 @@ fn impl_opcode_struct(ast: &syn::ItemEnum) -> Result<proc_macro2::TokenStream, S
                     // match immediate
                     let register_bits = ((ins & 0x7000) >> 12) as u8;
                     let register = Register::from_u8(register_bits).ok_or("invalid register")?;
-                    Ok(Instruction::Imm(register, ins&0xfff))
+                    let lit = Literal12Bit::new_checked(ins&0xfff)?;
+                    Ok(Instruction::Imm(register, lit))
                 }
             }
         }

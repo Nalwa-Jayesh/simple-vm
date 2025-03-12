@@ -1,0 +1,8 @@
+void main() {
+    let int a := 2;
+    a := foo();
+}
+
+void foo() {
+    let a := 7;
+}

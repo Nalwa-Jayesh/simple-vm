@@ -1,41 +1,37 @@
 use std::collections::HashMap;
 
-use crate::memory::{Addressable, LinearMemory};
-use crate::op::{Instruction, StackOp, TestOp};
+use crate::memory::{Addressable, MemoryMapper};
+use crate::op::Instruction;
+use crate::op_fields::{StackOp, TestOp};
 use crate::register::{Flag, Register};
 
 type SignalFunction = fn(&mut Machine, arg: u16) -> Result<(), String>;
 
+#[derive(Default)]
 pub struct Machine {
     registers: [u16; 8],
     signal_handlers: HashMap<u8, SignalFunction>,
     flags: u16,
     pub halt: bool,
-    pub memory: Box<dyn Addressable>,
-}
-
-impl Default for Machine {
-    fn default() -> Self {
-        Self {
-            registers: [0; 8],
-            signal_handlers: HashMap::new(),
-            halt: false,
-            flags: 0,
-            memory: Box::new(LinearMemory::new(8 * 1024)),
-        }
-    }
+    pub memory: MemoryMapper,
 }
 
 impl Machine {
-    pub fn new(memory_words: usize) -> Self {
-        Self {
-            memory: Box::new(LinearMemory::new(2 * memory_words)),
-            ..Self::default()
-        }
+    pub fn new() -> Self {
+        Self { ..Self::default() }
+    }
+
+    pub fn map(
+        &mut self,
+        start: usize,
+        size: usize,
+        a: Box<dyn Addressable>,
+    ) -> Result<(), String> {
+        self.memory.map(start, size, a)
     }
 
     pub fn reset(&mut self) {
-        self.memory.zero_all();
+        let _ = self.memory.zero_all();
         self.registers = [0; 8];
         self.flags = 0;
         self.halt = false;
@@ -81,30 +77,20 @@ Flags: {:016b}",
 
     pub fn pop(&mut self, stack_pointer_register: Register) -> Result<u16, String> {
         let sp = self.get_register(stack_pointer_register) - 2;
-        if let Some(v) = self.memory.read2(sp as u32) {
-            self.set_register(stack_pointer_register, sp);
-            Ok(v)
-        } else {
-            Err(format!("memory read fault @ 0x{:X}", sp))
-        }
+        let v = self.memory.read2(sp as u32).map_err(|x| x.to_string())?;
+        self.set_register(stack_pointer_register, sp);
+        Ok(v)
     }
 
     pub fn peek(&mut self, stack_pointer_register: Register) -> Result<u16, String> {
         let sp = self.get_register(stack_pointer_register) - 2;
-        if let Some(v) = self.memory.read2(sp as u32) {
-            Ok(v)
-        } else {
-            Err(format!("memory read fault @ 0x{:X}", sp))
-        }
+        self.memory.read2(sp as u32).map_err(|x| x.to_string())
     }
 
     pub fn push(&mut self, stack_pointer_register: Register, v: u16) -> Result<(), String> {
         let sp = self.get_register(stack_pointer_register);
-        if !self.memory.write2(sp as u32, v) {
-            return Err(format!("memory write fault @ 0x{:X}", sp));
-        }
         self.set_register(stack_pointer_register, sp + 2);
-        Ok(())
+        self.memory.write2(sp as u32, v).map_err(|x| x.to_string())
     }
 
     pub fn set_flag(&mut self, flag: Flag, state: bool) {
@@ -121,17 +107,14 @@ Flags: {:016b}",
 
     pub fn step(&mut self) -> Result<(), String> {
         let pc = self.get_register(Register::PC);
-        let instruction = self
-            .memory
-            .read2(pc as u32)
-            .ok_or(format!("pc read fail @ 0x{:X}", pc))?;
+        let instruction = self.memory.read2(pc as u32).map_err(|x| x.to_string())?;
         self.set_flag(Flag::DidJump, false);
         let op = Instruction::try_from(instruction)?;
         println!("running {}", op);
         match op {
-            Instruction::Invalid(_) => Err("0 instruction".to_string()),
-            Instruction::Imm(reg, value) => {
-                self.set_register(reg, value);
+            Instruction::Invalid => Err("0 instruction".to_string()),
+            Instruction::Imm(reg, v) => {
+                self.set_register(reg, v.value);
                 Ok(())
             }
             Instruction::Add(r0, r1, dst) => {
@@ -186,10 +169,7 @@ Flags: {:016b}",
                 let base = self.get_register(r1);
                 let page = self.get_register(r2);
                 let addr = (base as u32) + ((page as u32) << 16);
-                let w = self
-                    .memory
-                    .read2(addr)
-                    .ok_or(format!("failed to read word @ {}", addr))?;
+                let w = self.memory.read2(addr).map_err(|x| x.to_string())?;
                 self.set_register(r0, w);
                 Ok(())
             }
@@ -197,22 +177,18 @@ Flags: {:016b}",
                 let base = self.get_register(r0);
                 let page = self.get_register(r1);
                 let addr = (base as u32) + ((page as u32) << 16);
-                match self.memory.write2(addr, self.get_register(r2)) {
-                    true => Ok(()),
-                    false => Err(format!(
-                        "failed to write word {} @ {}",
-                        self.get_register(r2),
-                        addr
-                    )),
-                }
+                self.memory
+                    .write2(addr, self.get_register(r2))
+                    .map_err(|x| x.to_string())
             }
             Instruction::JumpOffset(b) => {
                 self.set_register(Register::PC, self.get_register(Register::PC) + b.value);
                 Ok(())
             }
             Instruction::SetAndSave(r0, r1, save) => {
+                let v = self.get_register(r1); // save this upfront in case r0 == r1!
                 self.set_register(save, self.get_register(r0));
-                self.set_register(r0, self.get_register(r1));
+                self.set_register(r0, v);
                 Ok(())
             }
             Instruction::AddAndSave(r0, r1, save) => {
@@ -238,9 +214,9 @@ Flags: {:016b}",
                 self.set_flag(Flag::Compare, res);
                 Ok(())
             }
-            Instruction::AddIf(r0, offset) => {
+            Instruction::AddIf(r0, r1, offset) => {
                 if self.test_flag(Flag::Compare) {
-                    self.set_register(r0, self.get_register(r0) + 2 * (offset.value as u16));
+                    self.set_register(r0, self.get_register(r1) + 2 * (offset.value as u16));
                     self.set_flag(Flag::Compare, false);
                 }
                 Ok(())
@@ -285,7 +261,7 @@ Flags: {:016b}",
                     StackOp::Sub => {
                         let a = self.pop(sp)?;
                         let b = self.pop(sp)?;
-                        self.push(sp, a - b)?;
+                        self.push(sp, a.wrapping_sub(b))?;
                     }
                 };
                 Ok(())
@@ -293,13 +269,8 @@ Flags: {:016b}",
             Instruction::LoadStackOffset(tgt, sp, word_offset) => {
                 let base = self.get_register(sp);
                 let addr = base - ((word_offset.value as u16) * 2);
-                self.set_register(
-                    tgt,
-                    self.memory.read2(addr as u32).ok_or(format!(
-                        "invalid stack read: stack={}, offset={:X} @ {:X}",
-                        sp, word_offset.value, addr
-                    ))?,
-                );
+                let stack_value = self.memory.read2(addr as u32).map_err(|x| x.to_string())?;
+                self.set_register(tgt, stack_value);
                 Ok(())
             }
             Instruction::System(Register::Zero, reg_arg, signal) => {
