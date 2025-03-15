@@ -91,11 +91,6 @@ fn expression_literal_char(input: &str) -> CResult<&str, ast::Expression> {
     )(input)
 }
 
-fn expression_variable(input: &str) -> CResult<&str, ast::Expression> {
-    map(identifier, |s| ast::Expression::Variable(s.0))(input)
-        .map_err(|v| ConfidenceError::from(v, Confidence::Low))
-}
-
 fn expression_address_of(input: &str) -> CResult<&str, ast::Expression> {
     let (s0, _) = skip_whitespace(token("&"))(input)?;
     let (s1, name) = identifier(s0).map_err(|v| ConfidenceError::from(v, Confidence::Medium))?;
@@ -166,7 +161,12 @@ pub fn expression_struct_fields(input: &str) -> CResult<&str, ast::Expression> {
     let (s0, id) = skip_whitespace(with_confidence(identifier, Confidence::Low))(input)?;
     let (s1, mut fields) = repeat1(dotted_field)(s0)?;
     fields.insert(0, id);
-    Ok((s1, ast::Expression::FieldDeref(fields)))
+    Ok((s1, ast::Expression::Variable(fields)))
+}
+
+pub fn expression_variable(input: &str) -> CResult<&str, ast::Expression> {
+    let (s0, id) = skip_whitespace(with_confidence(identifier, Confidence::Low))(input)?;
+    Ok((s0, ast::Expression::Variable(vec![id])))
 }
 
 fn expression_lhs(input: &str) -> CResult<&str, ast::Expression> {
