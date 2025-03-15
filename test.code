@@ -1,8 +1,12 @@
 void main() {
     let int a := 2;
-    a := foo();
+    let int b := foo_bar(a, 7);
+
+    return a;
 }
 
-void foo() {
-    let a := 7;
+asm! foo_bar(int a, int b) {
+    LoadStackOffset A SP 3
+    LoadStackOffset B SP 4
+    Add A B A
 }
