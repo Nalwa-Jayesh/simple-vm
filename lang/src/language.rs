@@ -65,7 +65,7 @@ fn expression_literal_int_base10(input: &str) -> CResult<&str, ast::Expression> 
     map(repeat1(numeric), |x| {
         ast::Expression::LiteralInt(x.iter().collect::<String>().parse::<i32>().unwrap())
     })(input)
-        .map_err(|v| ConfidenceError::from(v, Confidence::Low))
+    .map_err(|v| ConfidenceError::from(v, Confidence::Low))
 }
 
 fn expression_literal_int_base16(input: &str) -> CResult<&str, ast::Expression> {
@@ -77,7 +77,7 @@ fn expression_literal_int_base16(input: &str) -> CResult<&str, ast::Expression> 
             Err(e) => Err(ParseError::new(input, ParseErrorKind::Numeric(e))),
         }
     })(s0)
-        .map_err(|v| ConfidenceError::from(v, Confidence::Low))
+    .map_err(|v| ConfidenceError::from(v, Confidence::Low))
 }
 
 fn expression_literal_char(input: &str) -> CResult<&str, ast::Expression> {
@@ -99,7 +99,9 @@ fn expression_variable(input: &str) -> CResult<&str, ast::Expression> {
 fn expression_address_of(input: &str) -> CResult<&str, ast::Expression> {
     let (s0, _) = skip_whitespace(token("&"))(input)?;
     let (s1, name) = identifier(s0).map_err(|v| ConfidenceError::from(v, Confidence::Medium))?;
-    Ok((s1, ast::Expression::AddressOf(name)))
+    let (s2, mut fields) = repeat0(dotted_field)(s1)?;
+    fields.insert(0, name);
+    Ok((s2, ast::Expression::AddressOf(fields)))
 }
 
 pub fn expression_call(input: &str) -> CResult<&str, ast::Expression> {
@@ -147,7 +149,7 @@ pub fn binop(input: &str) -> CResult<&str, ast::BinOp> {
         ),
         |x| ast::BinOp::from_str(x).unwrap(),
     )
-        .run(input)
+    .run(input)
 }
 
 pub fn expression_binop(input: &str) -> CResult<&str, ast::Expression> {
@@ -179,8 +181,8 @@ fn expression_lhs(input: &str) -> CResult<&str, ast::Expression> {
         expression_bracketed,
         expression_deref,
     ])
-        .run(input)
-        .map_err(|v| ConfidenceError::select(&v))
+    .run(input)
+    .map_err(|v| ConfidenceError::select(&v))
 }
 
 fn expression(input: &str) -> CResult<&str, ast::Expression> {
@@ -265,13 +267,13 @@ pub fn statement_if(input: &str) -> CResult<&str, ast::Statement> {
         expression,
         skip_whitespace(token(")")),
     )(s0)
-        .map_err(ConfidenceError::elevate)?;
+    .map_err(ConfidenceError::elevate)?;
     let (s2, body) = wrapped(
         skip_whitespace(token("{")),
         repeat1(skip_whitespace(statement)),
         skip_whitespace(token("}")),
     )(s1)
-        .map_err(ConfidenceError::elevate)?;
+    .map_err(ConfidenceError::elevate)?;
     let (sn, else_body) = match skip_whitespace(token("else"))(s2) {
         Ok((s3, _)) => {
             let (s4, eb) = wrapped(
@@ -279,7 +281,7 @@ pub fn statement_if(input: &str) -> CResult<&str, ast::Statement> {
                 repeat1(skip_whitespace(statement)),
                 skip_whitespace(token("}")),
             )(s3)
-                .map_err(ConfidenceError::elevate)?;
+            .map_err(ConfidenceError::elevate)?;
             (s4, Some(eb))
         }
         Err(_) => (s2, None),
@@ -301,13 +303,13 @@ fn statement_while(input: &str) -> CResult<&str, ast::Statement> {
         expression,
         skip_whitespace(token(")")),
     )(s0)
-        .map_err(ConfidenceError::elevate)?;
+    .map_err(ConfidenceError::elevate)?;
     let (sn, body) = wrapped(
         skip_whitespace(token("{")),
         repeat1(skip_whitespace(statement)),
         skip_whitespace(token("}")),
     )(s1)
-        .map_err(ConfidenceError::elevate)?;
+    .map_err(ConfidenceError::elevate)?;
     Ok((sn, ast::Statement::While { cond, body }))
 }
 
@@ -346,8 +348,8 @@ pub fn statement(input: &str) -> CResult<&str, ast::Statement> {
         statement_break,
         statement_expression,
     ])
-        .run(input)
-        .map_err(|v| ConfidenceError::select(&v))
+    .run(input)
+    .map_err(|v| ConfidenceError::select(&v))
 }
 
 fn skip_whitespace<'a, T, F>(f: F) -> impl Fn(&'a str) -> CResult<&'a str, T>
@@ -453,8 +455,8 @@ pub fn parse_ast(input: &str) -> PResult<&str, Vec<ast::TopLevel>> {
                 function_definition,
                 type_definition,
             ])
-                .run(state_next)
-                .map_err(|es| ConfidenceError::select(&es).take())?;
+            .run(state_next)
+            .map_err(|es| ConfidenceError::select(&es).take())?;
             out.push(res);
             current_state = snn;
         }

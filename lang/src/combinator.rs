@@ -256,7 +256,7 @@ mod test {
                 map(repeat1(alpha), |x| x.iter().collect::<String>()),
                 token("}}"),
             )("<<foobar}}")
-                .unwrap();
+            .unwrap();
             assert_eq!("foobar", n);
             assert_eq!("", s);
         }
@@ -269,7 +269,7 @@ mod test {
                 "\"
 Hello world this is some text. \"",
             )
-                .unwrap();
+            .unwrap();
             assert_eq!("\nHello world this is some text. ", n);
             assert_eq!("", s);
         }
