@@ -270,7 +270,7 @@ pub fn statement_variable_assign_array(input: &str) -> CResult<&str, ast::Statem
     let (s4, _) = skip_whitespace(token(":="))(s3).map_err(ConfidenceError::elevate)?;
     let (s5, rhs) = skip_whitespace(expression)(s4).map_err(ConfidenceError::elevate)?;
     let (s6, _) = skip_whitespace(token(";"))(s5).map_err(ConfidenceError::elevate)?;
-    Ok((s3, ast::Statement::AssignArray { lhs, index, rhs }))
+    Ok((s6, ast::Statement::AssignArray { lhs, index, rhs }))
 }
 
 pub fn statement_variable_declare(input: &str) -> CResult<&str, ast::Statement> {
@@ -546,18 +546,14 @@ mod test {
             let expected = "putch('a')";
             assert_eq!(
                 expected,
-                run_parser(expression_call, &expected.to_string())
-                    .unwrap()
-                    .to_string()
+                run_parser(expression_call, expected).unwrap().to_string()
             );
         }
         {
             let expected = "foo(1, 2, 3)";
             assert_eq!(
                 expected,
-                run_parser(expression_call, &expected.to_string())
-                    .unwrap()
-                    .to_string()
+                run_parser(expression_call, expected).unwrap().to_string()
             );
         }
     }

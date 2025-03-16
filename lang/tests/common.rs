@@ -51,7 +51,7 @@ pub fn run_program_with_memory_size(program: &str, memory: usize) -> Result<Mach
         let program_bytes = program_words.align_to::<u8>().1;
         vm.vm
             .memory
-            .load_from_vec(&program_bytes, res.program_start_offset)
+            .load_from_vec(program_bytes, res.program_start_offset)
             .map_err(|x| x.to_string())?;
     }
     vm.set_register(Register::PC, res.program_start_offset as u16);
