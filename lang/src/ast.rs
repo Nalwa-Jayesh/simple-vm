@@ -54,6 +54,11 @@ pub enum Statement {
         lhs: Expression,
         rhs: Expression,
     },
+    AssignArray {
+        lhs: Expression,
+        index: Expression,
+        rhs: Expression,
+    },
     AssignStructField {
         fields: Vec<Identifier>,
         rhs: Expression,
@@ -82,6 +87,7 @@ impl fmt::Display for Statement {
             Self::Declare(i, None, None) => write!(f, "let {i};"),
             Self::Assign(i, expr) => write!(f, "{i} := {expr};"),
             Self::AssignDeref { lhs, rhs } => write!(f, "*{lhs} := {rhs};"),
+            Self::AssignArray { lhs, index, rhs } => write!(f, "{lhs}[{index}] := {rhs};"),
             Self::AssignStructField { fields, rhs } => write!(
                 f,
                 "{} := {rhs};",
@@ -196,6 +202,7 @@ pub enum Expression {
     BinOp(Box<Expression>, Box<Expression>, BinOp),
     FunctionCall(Identifier, Vec<Expression>),
     Bracketed(Box<Expression>),
+    BuiltinSizeof(Type),
     ArrayDeref {
         lhs: Box<Expression>,
         index: Box<Expression>,
@@ -220,6 +227,7 @@ impl fmt::Display for Expression {
             Self::BinOp(e0, e1, op) => write!(f, "{e0} {op} {e1}"),
             Self::Bracketed(e) => write!(f, "({e})"),
             Self::ArrayDeref { lhs, index } => write!(f, "&{lhs} [{index}]"),
+            Self::BuiltinSizeof(t) => write!(f, "sizeof({t})"),
             Self::Variable(fields) => write!(
                 f,
                 "{}",

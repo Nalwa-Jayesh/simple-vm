@@ -112,6 +112,7 @@ impl Type {
         match self {
             Self::Int => true,
             Self::Char => true,
+            Self::UncheckedInt => true,
             _ => false,
         }
     }
@@ -194,7 +195,15 @@ pub fn type_of(ctx: &Context, scope: &BlockScope, expr: &ast::Expression) -> Typ
     match expr {
         ast::Expression::LiteralInt(_) => Type::Int,
         ast::Expression::LiteralChar(_) => Type::Char,
+        ast::Expression::BuiltinSizeof(_) => Type::Int,
         ast::Expression::AddressOf(fields) => get_fields_type(ctx, scope, fields),
+        ast::Expression::ArrayDeref { lhs, index: _ } => {
+            if let Type::Pointer(t) = type_of(ctx, scope, lhs.as_ref()) {
+                *t.clone()
+            } else {
+                Type::Void
+            }
+        }
         ast::Expression::Deref(expr) => {
             let inner_type = type_of(ctx, scope, expr);
             if let Type::Pointer(t) = inner_type {
