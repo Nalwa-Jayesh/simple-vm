@@ -9,12 +9,12 @@ use simplevm::{
     TestOp,
 };
 
-use crate::ast;
 use crate::compile::block::{Block, BlockScope, BlockVariable, LoopLabels};
 use crate::compile::context::{Context, FunctionDefinition};
 use crate::compile::error::CompilerError;
 use crate::compile::resolve::{type_of, Symbol, Type, UnresolvedInstruction};
 use crate::compile::util::*;
+use crate::{args, ast};
 
 fn compile_block(
     ctx: &mut Context,
@@ -515,6 +515,17 @@ fn compile_expression(
             Ok(out)
         }
         ast::Expression::FunctionCall(id, args) => {
+            let def = ctx
+                .function_defs
+                .get(&id.0)
+                .ok_or(CompilerError::UnknownFunction(id.0.to_string()));
+            if def.args.len() != args.len() {
+                return Err(CompilerError::IncorrectFunctionArgCount {
+                    name: id.0.to_string(),
+                    expected: def.args.len(),
+                    got: args.len(),
+                });
+            }
             let mut out = Vec::new();
             for a in args.iter().rev() {
                 out.append(&mut compile_expression(ctx, scope, a)?);
