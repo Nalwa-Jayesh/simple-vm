@@ -97,7 +97,7 @@ mod test {
 
     #[test]
     fn test_encodings() -> Result<(), String> {
-        let ops = vec![
+        let ops = [
             Imm(M, Literal12Bit::new_checked(0x30)?),
             AddImm(C, Literal7Bit::new_checked(0x20)?),
             AddImmSigned(A, Literal7Bit::new_checked(0x7)?),

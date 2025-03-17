@@ -5,6 +5,7 @@ use std::io::{BufReader, Read, Write};
 use std::path::Path;
 use std::str::FromStr;
 
+use simplevm::binfmt::{BinaryFile, Section};
 use simplevm::pp::macros;
 use simplevm::pp::PreProcessor;
 
@@ -35,16 +36,24 @@ fn main() -> Result<(), String> {
     let processed = processor
         .resolve(&content)
         .map_err(|_| "failed to resolve".to_string())?;
-    for line in processed {
-        let resolved = processor
-            .resolve_pass2(&line)
-            .map_err(|_| format!("failed to resolve line: {}", line.get_line_number()))?;
-        if args.preprocess_only {
-            for &b in format!("{}: {}", line.get_line_number(), resolved).as_bytes() {
-                output.push(b);
+    if args.preprocess_only {
+        for line in processed {
+            let resolved = processor
+                .resolve_pass2(&line)
+                .map_err(|_| format!("failed to resolve line: {}", line.get_line_number()))?;
+            if args.preprocess_only {
+                for &b in format!("{}: {}", line.get_line_number(), resolved).as_bytes() {
+                    output.push(b);
+                }
+                output.push(b'\n');
             }
-            output.push(b'\n');
-        } else {
+        }
+    } else {
+        let mut program_bytes = Vec::<u8>::new();
+        for line in processed {
+            let resolved = processor
+                .resolve_pass2(&line)
+                .map_err(|_| format!("failed to resolve line: {}", line.get_line_number()))?;
             if resolved.is_empty() {
                 continue;
             }
@@ -54,9 +63,8 @@ fn main() -> Result<(), String> {
             match Instruction::from_str(&resolved) {
                 Ok(instruction) => {
                     let raw_instruction: u16 = instruction.encode_u16();
+                    program_bytes.extend_from_slice(&raw_instruction.to_le_bytes());
                     // assumption: >>8 needs to mask for u16
-                    output.push((raw_instruction & 0xff) as u8);
-                    output.push((raw_instruction >> 8) as u8);
                 }
                 Err(InstructionParseError::Fail(s)) => {
                     panic!("line {} ({}): {}", line.get_line_number(), resolved, s);
@@ -64,6 +72,19 @@ fn main() -> Result<(), String> {
                 _ => panic!("line {} ({}): error", line.get_line_number(), resolved),
             }
         }
+        let mut bin = BinaryFile::default();
+        bin.entrypoint = 0;
+        bin.version = 99;
+        bin.sections.push(Section {
+            size: program_bytes.len() as u16,
+            mode: 0,
+            address: 0,
+            file_offset: 1,
+        });
+        let header_size = bin.get_header_size();
+        bin.sections.get_mut(0).unwrap().file_offset = header_size as u32;
+        bin.data = program_bytes;
+        bin.to_bytes(&mut output);
     }
     let mut stdout = io::stdout().lock();
     stdout.write_all(&output).map_err(|x| format!("{}", x))?;

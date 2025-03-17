@@ -74,7 +74,7 @@ pub fn run_program_code(m: &mut Machine, program: &[Instruction]) -> Result<(), 
     unsafe {
         let program_bytes = program_words.align_to::<u8>().1;
         m.vm.memory
-            .load_from_vec(&program_bytes, 0)
+            .load_from_vec(program_bytes, 0)
             .map_err(|x| x.to_string())?;
     }
     m.set_register(Register::SP, 1024 * 3);
