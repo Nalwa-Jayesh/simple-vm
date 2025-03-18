@@ -4,6 +4,7 @@ use std::io::{stdin, BufReader, Read};
 use std::path::Path;
 
 use simplevm::binfmt::BinaryFile;
+
 fn main() -> Result<(), String> {
     let args: Vec<_> = env::args().collect();
     if args.len() != 2 {
@@ -24,17 +25,6 @@ fn main() -> Result<(), String> {
         .map_err(|x| format!("read: {}", x))?;
 
     let file = BinaryFile::from_bytes(&bin)?;
-    println!(
-        "version: {}\nentrypoint: {}\n# sections: {}",
-        file.version,
-        file.entrypoint,
-        file.sections.len()
-    );
-    for s in &file.sections {
-        println!(
-            "section: size: {}, mode: {}, offset: {}, addr: {}",
-            s.size, s.mode, s.file_offset, s.address
-        );
-    }
+    println!("{file}");
     Ok(())
 }

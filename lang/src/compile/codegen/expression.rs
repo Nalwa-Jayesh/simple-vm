@@ -1,15 +1,19 @@
 use crate::compile::codegen::util::*;
 
-use simplevm::{Instruction, Literal12Bit, Literal7Bit, Nibble, Register, StackOp, TestOp};
+use simplevm::{
+    resolve::UnresolvedInstruction, Instruction, Literal12Bit, Literal7Bit, Nibble, Register,
+    StackOp, TestOp,
+};
 
 use crate::ast;
 use crate::compile::block::{BlockScope, BlockVariable};
 use crate::compile::context::Context;
 use crate::compile::error::CompilerError;
-use crate::compile::resolve::{type_of, Symbol, Type, UnresolvedInstruction};
+use crate::compile::resolve::{type_of, Type};
+// use crate::compile::util::*;
 
 pub fn compile_expression(
-    ctx: &Context,
+    ctx: &mut Context,
     scope: &mut BlockScope,
     expr: &ast::Expression,
 ) -> Result<Vec<UnresolvedInstruction>, CompilerError> {
@@ -81,6 +85,27 @@ pub fn compile_expression(
                 StackOp::Push,
             )),
         ]),
+        ast::Expression::LiteralString(s) => {
+            let mut const_data = Vec::<u8>::new();
+            // TODO: danger utf8 + str len assuming ascii
+            let str_len = s.len();
+            const_data.push((str_len & 0xff) as u8);
+            const_data.push(((str_len & 0xff00) >> 8) as u8);
+            let s_bytes = s.clone().into_bytes();
+            const_data.extend(s_bytes);
+            let addr = ctx.push_static_data(const_data) + 2;
+            let mut out = Vec::new();
+            if addr > 0xfff {
+                todo!("address too big: {addr}");
+            }
+            out.extend(load_address_to(addr as usize, Register::C, Register::M));
+            out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
+                Register::C,
+                Register::SP,
+                StackOp::Push,
+            )));
+            Ok(out)
+        }
         ast::Expression::BuiltinSizeof(t) => {
             let tt = Type::from_ast(ctx, t)?;
             let size = tt.size_bytes();
@@ -109,13 +134,17 @@ pub fn compile_expression(
                 Register::SP,
                 StackOp::Pop,
             )));
-            if inner_type.size_bytes() == 1 {
+            let pointed_type = match inner_type {
+                Type::Pointer(p) => p,
+                _ => panic!("we already asserted this was a pointer"),
+            };
+            if pointed_type.size_bytes() == 1 {
                 out.push(UnresolvedInstruction::Instruction(Instruction::LoadByte(
                     Register::C,
                     Register::C,
                     Register::Zero,
                 )));
-            } else if inner_type.size_bytes() == 2 {
+            } else if pointed_type.size_bytes() == 2 {
                 out.push(UnresolvedInstruction::Instruction(Instruction::LoadWord(
                     Register::C,
                     Register::C,
@@ -136,16 +165,18 @@ pub fn compile_expression(
             if fields.is_empty() {
                 panic!("unreachable");
             }
-            let head = fields.first().expect("unreachable");
+            let head = fields.first().expect("parser issue");
             let head_var = scope
                 .get(ctx, &head.0)
                 .ok_or(CompilerError::VariableUndefined(head.0.to_string()))?;
+
             let var_type = match &head_var {
                 BlockVariable::Local(_, ty) => ty,
                 BlockVariable::Arg(_, ty) => ty,
                 BlockVariable::Global(_, ty) => ty,
                 BlockVariable::Const(_) => &Type::Int,
             };
+
             get_stack_field_offset(&mut out, fields, var_type, &head_var, Register::C)?;
             out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
                 Register::C,
@@ -187,7 +218,7 @@ pub fn compile_expression(
                     Register::SP,
                     Register::Zero,
                 )),
-                UnresolvedInstruction::Imm(Register::PC, Symbol::new(&id.0)),
+                UnresolvedInstruction::Imm(Register::PC, id.0.to_string()),
                 // functions return in register A, so push this
                 UnresolvedInstruction::Instruction(Instruction::Stack(
                     Register::A,
@@ -199,15 +230,15 @@ pub fn compile_expression(
         }
         ast::Expression::BinOp(e0, e1, op) => {
             let mut out = Vec::new();
-            out.append(&mut compile_expression(ctx, scope, e0)?);
-            // expression 1 is on top of stack
             out.append(&mut compile_expression(ctx, scope, e1)?);
+            out.append(&mut compile_expression(ctx, scope, e0)?);
             // stack = [rv0, rv1]
             let e0_type = type_of(ctx, scope, e0);
             match op {
                 ast::BinOp::Add => {
                     if let Type::Pointer(t) = e0_type {
                         let size = t.size_bytes();
+                        // println!("pointer arith: += *sizeof({t}) (== {size})");
                         out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
                             Register::C,
                             Register::SP,
@@ -224,13 +255,13 @@ pub fn compile_expression(
                         )));
                         out.push(UnresolvedInstruction::Instruction(Instruction::Mul(
                             Register::C,
-                            Register::B,
                             Register::C,
+                            Register::B,
                         )));
                         out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
                             Register::C,
                             Register::SP,
-                            StackOp::Pop,
+                            StackOp::Push,
                         )));
                     }
                     out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
@@ -255,8 +286,8 @@ pub fn compile_expression(
                     )),
                     UnresolvedInstruction::Instruction(Instruction::Mul(
                         Register::C,
-                        Register::B,
                         Register::C,
+                        Register::B,
                     )),
                     UnresolvedInstruction::Instruction(Instruction::Stack(
                         Register::C,

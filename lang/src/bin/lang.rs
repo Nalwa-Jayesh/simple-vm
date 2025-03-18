@@ -37,10 +37,7 @@ fn main() -> Result<(), String> {
                 compile(program, LOADED_PROGRAM_OFFSET).map_err(|x| format!("compiling: {x:?}"))?;
             if args.output_format == OutputFormat::AnnotatedAsm {
                 let mut stdout = stdout().lock();
-                let offset = format!(
-                    ".offsetPC {}\n",
-                    (res.program_start_offset as f32 / 2.) as u32
-                );
+                let offset = format!(".offsetPC {}\n", res.get_code_section_start() / 2,);
                 stdout.write(offset.as_ref()).map_err(|x| format!("{x}"))?;
                 let symbol_defs = res
                     .symbols
@@ -59,16 +56,9 @@ fn main() -> Result<(), String> {
                     .write_all(instructions_txt.as_bytes())
                     .map_err(|x| format!("{x}"))?
             } else {
-                let instructions = res
-                    .get_instructions()
-                    .map_err(|x| format!("resolving: {x:?}"))?;
+                let bin = res.to_binary()?;
                 let mut output: Vec<u8> = Vec::new();
-                for i in instructions {
-                    let raw_instruction: u16 = i.encode_u16();
-                    // assumption: >>8 needs to mask for u16
-                    output.push((raw_instruction & 0xff) as u8);
-                    output.push((raw_instruction >> 8) as u8);
-                }
+                bin.to_bytes(&mut output);
                 let mut stdout = stdout().lock();
                 stdout.write_all(&output).map_err(|x| format!("{}", x))?;
             }

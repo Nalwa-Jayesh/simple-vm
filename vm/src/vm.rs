@@ -172,31 +172,63 @@ Flags: {:016b}",
         let instruction = self.memory.read2(pc as u32).map_err(|x| x.to_string())?;
         self.set_flag(Flag::DidJump, false);
         let op = Instruction::try_from(instruction)?;
-        println!("running {}", op);
+        // println!("running {}", op);
         match op {
             Instruction::Invalid => Err("0 instruction".to_string()),
             Instruction::Imm(reg, v) => {
                 self.set_register(reg, v.value);
                 Ok(())
             }
-            Instruction::Add(r0, r1, dst) => {
+            // binops
+            Instruction::Add(dst, r0, r1) => {
                 let a = self.get_register(r0);
                 let b = self.get_register(r1);
-                self.set_register(dst, a + b);
+                let (res, overflow) = a.overflowing_add(b);
+                self.set_register(dst, res);
+                self.set_flag(Flag::Overflow, overflow);
                 Ok(())
             }
-            Instruction::Sub(r0, r1, dst) => {
+            Instruction::Sub(dst, r0, r1) => {
                 let a = self.get_register(r0);
                 let b = self.get_register(r1);
-                self.set_register(dst, a.wrapping_sub(b));
+                let (res, overflow) = a.overflowing_sub(b);
+                self.set_register(dst, res);
+                self.set_flag(Flag::Overflow, overflow);
                 Ok(())
             }
-            Instruction::Mul(r0, r1, dst) => {
+            Instruction::Mul(dst, r0, r1) => {
                 let a = self.get_register(r0);
                 let b = self.get_register(r1);
-                self.set_register(dst, a * b);
+                let (res, overflow) = a.overflowing_mul(b);
+                self.set_register(dst, res);
+                self.set_flag(Flag::Overflow, overflow);
                 Ok(())
             }
+            Instruction::And(dst, r0, r1) => {
+                let a = self.get_register(r0);
+                let b = self.get_register(r1);
+                self.set_register(dst, a & b);
+                Ok(())
+            }
+            Instruction::Or(dst, r0, r1) => {
+                let a = self.get_register(r0);
+                let b = self.get_register(r1);
+                self.set_register(dst, a | b);
+                Ok(())
+            }
+            Instruction::Xor(dst, r0, r1) => {
+                let a = self.get_register(r0);
+                let b = self.get_register(r1);
+                self.set_register(dst, a ^ b);
+                Ok(())
+            }
+            Instruction::Mod(dst, r0, r1) => {
+                let a = self.get_register(r0);
+                let b = self.get_register(r1);
+                self.set_register(dst, a % b);
+                Ok(())
+            }
+            // immediates
             Instruction::AddImm(r, i) => {
                 self.set_register(r, self.get_register(r) + (i.value as u16));
                 Ok(())
@@ -213,61 +245,57 @@ Flags: {:016b}",
                 }
                 Ok(())
             }
-            Instruction::ShiftLeft(r0, r1, offset) => {
+            Instruction::ShiftLeft(dst, r0, offset) => {
                 let base = self.get_register(r0);
-                self.set_register(r1, base << (offset.value as u16));
+                self.set_register(dst, base << (offset.value as u16));
                 Ok(())
             }
-            Instruction::ShiftRightLogical(r0, r1, offset) => {
+            Instruction::ShiftRightLogical(dst, r0, offset) => {
                 let base = self.get_register(r0);
-                self.set_register(r1, base >> (offset.value as u16));
+                self.set_register(dst, base >> (offset.value as u16));
                 Ok(())
             }
-            Instruction::ShiftRightArithmetic(r0, r1, offset) => {
+            Instruction::ShiftRightArithmetic(dst, r0, offset) => {
                 let base = self.get_register(r0);
                 unsafe {
                     let as_signed: i16 = std::mem::transmute(base);
                     let shifted: i16 = as_signed >> (offset.value as u16);
                     let res: u16 = std::mem::transmute(shifted);
-                    self.set_register(r1, res);
+                    self.set_register(dst, res);
                 }
                 Ok(())
             }
-            Instruction::LoadWord(r0, r1, r2) => {
+            Instruction::LoadWord(dst, r1, r2) => {
                 let base = self.get_register(r1);
                 let page = self.get_register(r2);
                 let addr = (base as u32) + ((page as u32) << 16);
                 let w = self.memory.read2(addr).map_err(|x| x.to_string())?;
-                self.set_register(r0, w);
+                self.set_register(dst, w);
                 Ok(())
             }
-            Instruction::LoadByte(r0, r1, r2) => {
+            Instruction::LoadByte(dst, r1, r2) => {
                 let base = self.get_register(r1);
                 let page = self.get_register(r2);
                 let addr = (base as u32) + ((page as u32) << 16);
                 let w = self.memory.read(addr).map_err(|x| x.to_string())?;
-                self.set_register(r0, w as u16);
+                self.set_register(dst, w as u16);
                 Ok(())
             }
-            Instruction::StoreWord(r0, r1, r2) => {
-                let base = self.get_register(r0);
-                let page = self.get_register(r1);
+            Instruction::StoreWord(src, r1, r2) => {
+                let base = self.get_register(r1);
+                let page = self.get_register(r2);
                 let addr = (base as u32) + ((page as u32) << 16);
                 self.memory
-                    .write2(addr, self.get_register(r2))
+                    .write2(addr, self.get_register(src))
                     .map_err(|x| x.to_string())
             }
-            Instruction::StoreByte(r0, r1, r2) => {
-                let base = self.get_register(r0);
-                let page = self.get_register(r1);
+            Instruction::StoreByte(src, r1, r2) => {
+                let base = self.get_register(r1);
+                let page = self.get_register(r2);
                 let addr = (base as u32) + ((page as u32) << 16);
                 self.memory
-                    .write(addr, (self.get_register(r2) & 0xff) as u8)
+                    .write(addr, (self.get_register(src) & 0xff) as u8)
                     .map_err(|x| x.to_string())
-            }
-            Instruction::JumpOffset(b) => {
-                self.set_register(Register::PC, self.get_register(Register::PC) + b.value);
-                Ok(())
             }
             Instruction::SetAndSave(r0, r1, save) => {
                 let v = self.get_register(r1); // save this upfront in case r0 == r1!

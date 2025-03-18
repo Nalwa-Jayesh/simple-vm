@@ -1,12 +1,12 @@
 void main() {
-    let int a := 2;
-    let int b := foo_bar(a, 7);
-
-    return a;
+    let int i := a(2);
+    return i;
 }
 
-asm! foo_bar(int a, int b) {
-    LoadStackOffset A SP 3
-    LoadStackOffset B SP 4
-    Add A B A
+int a(int x) {
+    if (x <= 1) {
+        return 7;
+    } else {
+        return 12;
+    }
 }

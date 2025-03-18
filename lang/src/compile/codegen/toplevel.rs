@@ -1,18 +1,19 @@
 use crate::compile::codegen::block::compile_body;
 
-use std::str::FromStr;
+use std::collections::HashMap;
 
-use simplevm::pp;
-use simplevm::pp::PreProcessor;
+use simplevm::binfmt::SectionMode;
+use simplevm::pp::{Chunk, PreProcessor};
 use simplevm::{
-    Instruction, InstructionParseError, Literal12Bit, Literal7Bit, Nibble, Register, StackOp,
+    resolve::UnresolvedInstruction, Instruction, Literal12Bit, Literal7Bit, Nibble, Register,
+    StackOp,
 };
 
 use crate::ast;
 use crate::compile::block::Block;
 use crate::compile::context::{Context, FunctionDefinition};
 use crate::compile::error::CompilerError;
-use crate::compile::resolve::{Symbol, Type, UnresolvedInstruction};
+use crate::compile::resolve::{Symbol, Type};
 
 pub fn compile(
     program: Vec<ast::TopLevel>,
@@ -40,11 +41,11 @@ pub fn compile(
             StackOp::Push,
         )),
         UnresolvedInstruction::Instruction(Instruction::Add(
+            Register::BP,
             Register::SP,
             Register::Zero,
-            Register::BP,
         )),
-        UnresolvedInstruction::Imm(Register::PC, Symbol::new("main")),
+        UnresolvedInstruction::Imm(Register::PC, "main".to_string()),
         UnresolvedInstruction::Instruction(Instruction::Imm(
             Register::C,
             Literal12Bit::new_checked(0xf0).unwrap(),
@@ -107,66 +108,41 @@ pub fn compile(
         }
     }
     // global definition pass
-    let global_page_size = global_map
-        .iter()
-        .fold(0, |acc, (_, t)| acc + t.size_bytes());
     for (k, t) in global_map.iter() {
         ctx.define_global(k, t.clone());
     }
     // codegen pass
-    ctx.program_start_offset = offset + (global_page_size as u32);
-    let mut program_offset: u32 =
-        offset + (global_page_size as u32) + ctx.init.iter().map(|x| x.size()).sum::<u32>();
+    // TODO: just removed some global calc
+    // offset + (global_page_size as u32) + ctx.init.iter().map(|x| x.size()).sum::<u32>();
     for p in program {
         match p {
             ast::TopLevel::FunctionDefinition {
                 name, body, args, ..
             } => {
-                let block = compile_body(&mut ctx, body, &name.0, program_offset, args)
-                    .map_err(|x| (ctx.clone(), x))?;
-                block.register_labels(&mut ctx, program_offset);
-                let block_size: u32 = block.instructions.iter().map(|x| x.size()).sum();
+                let block =
+                    compile_body(&mut ctx, body, &name.0, args).map_err(|x| (ctx.clone(), x))?;
                 let local_count_sym = format!("__internal_{name}_local_count");
                 ctx.define(&Symbol::new(&local_count_sym), block.local_offset as u32);
-                ctx.functions.push(block);
-                program_offset += block_size;
+                ctx.functions.push((name.0.clone(), block));
             }
             ast::TopLevel::InlineAsm { name, body, args } => {
                 let mut pp = PreProcessor::default();
-                let lines = pp
-                    .resolve(&body)
+                pp.create_section("_test", 0, SectionMode::RW);
+                pp.set_active_section("_test");
+                pp.handle(&body)
                     .map_err(|x| (ctx.clone(), CompilerError::InlineAsm(x.to_string())))?;
-                let lines_str = lines
-                    .iter()
-                    .map(|x| pp.resolve_pass2(x))
-                    .collect::<Result<Vec<String>, pp::Error>>()
-                    .map_err(|x| (ctx.clone(), CompilerError::InlineAsm(x.to_string())))?;
+                let sections = pp
+                    .get_unresolved_instructions()
+                    .map_err(|e| (ctx.clone(), CompilerError::InlineAsm(e.to_string())))?;
+                let section = sections.get("_test").unwrap();
+
                 let mut block = Block::default();
-                for line in lines_str {
-                    match Instruction::from_str(&line) {
-                        Ok(instruction) => {
-                            block
-                                .instructions
-                                .push(UnresolvedInstruction::Instruction(instruction));
-                        }
-                        Err(InstructionParseError::Fail(s)) => {
-                            return Err((
-                                ctx.clone(),
-                                CompilerError::InlineAsm(format!(
-                                    "failed to parse instruction: {line}: {s}"
-                                )),
-                            ))
-                        }
-                        _ => {
-                            return Err((
-                                ctx.clone(),
-                                CompilerError::InlineAsm(format!(
-                                    "failed to parse instruction: {line}"
-                                )),
-                            ))
-                        }
+                for chunk in &section.chunks {
+                    if let Chunk::Lines(lines) = chunk {
+                        block.instructions.extend(lines.clone());
                     }
                 }
+
                 // function exit
                 // load return address -> C
                 block.instructions.push(UnresolvedInstruction::Instruction(
@@ -180,9 +156,9 @@ pub fn compile(
                 block
                     .instructions
                     .push(UnresolvedInstruction::Instruction(Instruction::Add(
+                        Register::SP,
                         Register::BP,
                         Register::Zero,
-                        Register::SP,
                     )));
                 let offset = -4 - 2 * (args.len() as i8);
                 block.instructions.push(UnresolvedInstruction::Instruction(
@@ -208,9 +184,9 @@ pub fn compile(
                 block
                     .instructions
                     .push(UnresolvedInstruction::Instruction(Instruction::Add(
+                        Register::PC,
                         Register::C,
                         Register::Zero,
-                        Register::PC,
                     )));
 
                 // TODO: copy this for function defs rather than lookup in compile_body
@@ -220,15 +196,26 @@ pub fn compile(
                         &Type::from_ast(&ctx, &arg_type).map_err(|e| (ctx.clone(), e))?,
                     );
                 }
-                block.offset = program_offset;
-                let block_size: u32 = block.instructions.iter().map(|x| x.size()).sum();
-                program_offset += block_size;
-                ctx.define(&Symbol::new(&name.0), block.offset);
-                ctx.functions.push(block);
+                ctx.functions.push((name.0.clone(), block));
             }
             ast::TopLevel::GlobalVariable { .. } => {}
             ast::TopLevel::TypeDefinition { .. } => {}
         }
     }
+
+    let mut offsets: HashMap<String, u32> = HashMap::new();
+
+    let mut program_offset = ctx.get_code_section_start();
+    // function offset allocation pass
+    for (name, block) in ctx.functions.clone() {
+        let block_size: u32 = block.instructions.iter().map(|x| x.size()).sum();
+        offsets.insert(name.to_string(), program_offset);
+        block.register_labels(&mut ctx, program_offset);
+        program_offset += block_size;
+    }
+    for (name, offset) in offsets {
+        ctx.define(&Symbol::new(&name), offset);
+    }
+
     Ok(ctx)
 }

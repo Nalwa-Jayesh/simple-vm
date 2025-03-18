@@ -1,3 +1,4 @@
+.section code 0 RO
 Imm A 400
 Imm B $123
 ShiftLeft B B 4
@@ -11,7 +12,7 @@ Test A Zero Lte
 AddIf PC C 0
 Imm C 1
 Sub A C A
-Store M Zero B
+StoreByte M Zero B
 AddImm M 2
 Imm C 16
 ShiftLeft C C 4

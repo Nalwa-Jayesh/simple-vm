@@ -75,6 +75,23 @@ pub trait Addressable {
     }
 }
 
+impl<F> Addressable for RefCell<F>
+where
+    F: Addressable,
+{
+    fn read(&mut self, addr: u32) -> Result<u8, MemoryError> {
+        self.borrow_mut().read(addr)
+    }
+
+    fn write(&mut self, addr: u32, value: u8) -> Result<(), MemoryError> {
+        self.borrow_mut().write(addr, value)
+    }
+
+    fn zero_all(&mut self) -> Result<(), MemoryError> {
+        self.borrow_mut().zero_all()
+    }
+}
+
 pub type MemoryRecord = (usize, usize, RefCell<Box<dyn Addressable>>);
 
 #[derive(Default)]
@@ -90,6 +107,16 @@ impl MemoryMapper {
         a: Box<dyn Addressable>,
     ) -> Result<(), String> {
         self.mapped.push((start, size, RefCell::new(a)));
+        Ok(())
+    }
+
+    pub fn map_ref(
+        &mut self,
+        start: usize,
+        size: usize,
+        a: RefCell<Box<dyn Addressable>>,
+    ) -> Result<(), String> {
+        self.mapped.push((start, size, a));
         Ok(())
     }
 
@@ -119,7 +146,10 @@ impl Addressable for MemoryMapper {
                 if addr_local >= *size as u32 {
                     Err(AddressTranslation(addr, Box::new(OutOfBounds(addr_local))))
                 } else {
-                    a.try_borrow_mut().unwrap().read(addr_local)
+                    a.try_borrow_mut()
+                        .unwrap()
+                        .read(addr_local)
+                        .map_err(|e| AddressTranslation(addr, Box::new(e)))
                 }
             }
             None => Err(InvalidMap(addr, i)),

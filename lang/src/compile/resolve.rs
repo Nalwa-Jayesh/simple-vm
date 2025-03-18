@@ -1,4 +1,3 @@
-use simplevm::{Instruction, Literal10Bit, Literal12Bit, Literal7Bit, Register};
 use std::collections::HashMap;
 use std::fmt;
 
@@ -19,66 +18,6 @@ impl fmt::Display for Symbol {
 impl Symbol {
     pub fn new(s: &str) -> Self {
         Self(s.to_owned())
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub enum UnresolvedInstruction {
-    Instruction(Instruction),
-    Imm(Register, Symbol),
-    AddImm(Register, Symbol),
-    AddImmSigned(Register, Symbol),
-    JumpOffset(Symbol),
-    Label(Symbol),
-}
-
-impl fmt::Display for UnresolvedInstruction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Instruction(i) => write!(f, "{i}"),
-            Self::Imm(r, s) => write!(f, "Imm {r} !{s}"),
-            Self::AddImm(r, s) => write!(f, "AddImm {r} !{s}"),
-            Self::AddImmSigned(r, s) => write!(f, "AddImmSigned {r} !{s}"),
-            Self::JumpOffset(s) => write!(f, "JumpOffset !{s}"),
-            Self::Label(s) => write!(f, ":{s}"),
-        }
-    }
-}
-
-impl UnresolvedInstruction {
-    pub fn resolve(&self, ctx: &Context) -> Result<Option<Instruction>, CompilerError> {
-        match self {
-            Self::Instruction(i) => Ok(Some(i.clone())),
-            Self::Imm(reg, sym) => ctx.get(sym).and_then(|v| {
-                Literal12Bit::new_checked(v as u16)
-                    .map_err(|_| CompilerError::LiteralOutOfBounds(v, 0, 0xfff))
-                    .map(|x| Some(Instruction::Imm(*reg, x)))
-            }),
-            Self::AddImm(reg, sym) => ctx.get(sym).and_then(|v| {
-                Literal7Bit::new_checked(v as u8)
-                    .map_err(|_| CompilerError::LiteralOutOfBounds(v, 0, 0x7f))
-                    .map(|x| Some(Instruction::AddImm(*reg, x)))
-            }),
-            Self::AddImmSigned(reg, sym) => ctx.get(sym).and_then(|v| {
-                Literal7Bit::new_checked(v as u8)
-                    .map_err(|_| CompilerError::LiteralOutOfBounds(v, 0, 0x7f))
-                    .map(|x| Some(Instruction::AddImmSigned(*reg, x)))
-            }),
-            Self::JumpOffset(sym) => ctx.get(sym).and_then(|v| {
-                Literal10Bit::new_checked(v as u16)
-                    .map_err(|_| CompilerError::LiteralOutOfBounds(v, 0, 0x3ff))
-                    .map(|x| Some(Instruction::JumpOffset(x)))
-            }),
-            Self::Label(_) => Ok(None),
-        }
-    }
-
-    pub fn size(&self) -> u32 {
-        match self {
-            Self::Label(_) => 0,
-            _ => 2,
-        }
     }
 }
 
@@ -190,8 +129,11 @@ pub fn type_of(ctx: &Context, scope: &BlockScope, expr: &ast::Expression) -> Typ
     match expr {
         ast::Expression::LiteralInt(_) => Type::Int,
         ast::Expression::LiteralChar(_) => Type::Char,
+        ast::Expression::LiteralString(_) => Type::Pointer(Box::new(Type::Void)),
         ast::Expression::BuiltinSizeof(_) => Type::Int,
-        ast::Expression::AddressOf(fields) => get_fields_type(ctx, scope, fields),
+        ast::Expression::AddressOf(fields) => {
+            Type::Pointer(Box::new(get_fields_type(ctx, scope, fields)))
+        }
         ast::Expression::ArrayDeref { lhs, index: _ } => {
             if let Type::Pointer(t) = type_of(ctx, scope, lhs.as_ref()) {
                 *t.clone()
@@ -220,7 +162,11 @@ pub fn type_of(ctx: &Context, scope: &BlockScope, expr: &ast::Expression) -> Typ
             let type_b = type_of(ctx, scope, b);
             match op {
                 ast::BinOp::Add | ast::BinOp::Subtract | ast::BinOp::Multiply => {
-                    type_a.max(&type_b)
+                    if let Type::Pointer(_) = type_a {
+                        type_a
+                    } else {
+                        type_a.max(&type_b)
+                    }
                 }
                 ast::BinOp::Mod => type_a,
                 ast::BinOp::Equal
@@ -246,6 +192,8 @@ fn variable_type(ctx: &Context, scope: &BlockScope, name: &str) -> Type {
     } else if ctx.symbols.contains_key(name) {
         Type::Int
     } else {
+        // undefined variables become void to maximize error info?
+        // alternate: cast to unchecked ints which cast to anything
         Type::Void
     }
 }

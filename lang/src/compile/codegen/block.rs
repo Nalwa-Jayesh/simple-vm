@@ -4,13 +4,15 @@ use crate::compile::codegen::util::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use simplevm::{Instruction, Literal7Bit, Nibble, Register, StackOp, TestOp};
+use simplevm::{
+    resolve::UnresolvedInstruction, Instruction, Literal7Bit, Nibble, Register, StackOp, TestOp,
+};
 
 use crate::ast;
 use crate::compile::block::{Block, BlockScope, BlockVariable, LoopLabels};
 use crate::compile::context::Context;
 use crate::compile::error::CompilerError;
-use crate::compile::resolve::{type_of, Symbol, Type, UnresolvedInstruction};
+use crate::compile::resolve::{type_of, Symbol, Type};
 use crate::compile::util::*;
 
 pub(super) fn compile_block(
@@ -23,14 +25,14 @@ pub(super) fn compile_block(
         match s {
             ast::Statement::Break => {
                 if let Some(LoopLabels { ref bottom, .. }) = scope.loop_labels {
-                    out.push(UnresolvedInstruction::Imm(Register::PC, bottom.clone()));
+                    out.push(UnresolvedInstruction::Imm(Register::PC, bottom.to_string()));
                 } else {
                     return Err(CompilerError::BreakNotInLoop);
                 }
             }
             ast::Statement::Continue => {
                 if let Some(LoopLabels { ref top, .. }) = scope.loop_labels {
-                    out.push(UnresolvedInstruction::Imm(Register::PC, top.clone()));
+                    out.push(UnresolvedInstruction::Imm(Register::PC, top.to_string()));
                 } else {
                     return Err(CompilerError::ContinueNotInLoop);
                 }
@@ -39,7 +41,7 @@ pub(super) fn compile_block(
                 let block_identifier = gensym(rand::thread_rng());
                 let label_test = Symbol::new(&(block_identifier.to_string() + "_while_lbl_test"));
                 let label_out = Symbol::new(&(block_identifier + "_while_lbl_out"));
-                out.push(UnresolvedInstruction::Label(label_test.clone()));
+                out.push(UnresolvedInstruction::Label(label_test.to_string()));
                 let mut compiled_cond = compile_expression(ctx, &mut scope, &cond)?;
                 out.append(&mut compiled_cond);
                 out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
@@ -57,11 +59,17 @@ pub(super) fn compile_block(
                     Register::PC,
                     Nibble::new_checked(2).unwrap(),
                 )));
-                out.push(UnresolvedInstruction::Imm(Register::PC, label_out.clone()));
+                out.push(UnresolvedInstruction::Imm(
+                    Register::PC,
+                    label_out.to_string(),
+                ));
                 let child_scope = scope.child_in_loop(label_test.clone(), label_out.clone());
                 out.append(&mut compile_block(ctx, child_scope, body)?);
-                out.push(UnresolvedInstruction::Imm(Register::PC, label_test.clone()));
-                out.push(UnresolvedInstruction::Label(label_out));
+                out.push(UnresolvedInstruction::Imm(
+                    Register::PC,
+                    label_test.to_string(),
+                ));
+                out.push(UnresolvedInstruction::Label(label_out.to_string()));
             }
             ast::Statement::If {
                 cond,
@@ -89,19 +97,28 @@ pub(super) fn compile_block(
                     Register::PC,
                     Nibble::new_checked(2).unwrap(),
                 )));
-                out.push(UnresolvedInstruction::Imm(Register::PC, label_true.clone()));
+                out.push(UnresolvedInstruction::Imm(
+                    Register::PC,
+                    label_true.to_string(),
+                ));
                 // condition == FALSE
                 if let Some(b) = else_body {
                     let child_scope = scope.child();
                     out.append(&mut compile_block(ctx, child_scope, b)?);
                 };
-                out.push(UnresolvedInstruction::Imm(Register::PC, label_out.clone()));
+                out.push(UnresolvedInstruction::Imm(
+                    Register::PC,
+                    label_out.to_string(),
+                ));
                 // condition == TRUE
-                out.push(UnresolvedInstruction::Label(label_true));
+                out.push(UnresolvedInstruction::Label(label_true.to_string()));
                 let child_scope = scope.child();
                 out.append(&mut compile_block(ctx, child_scope, body)?);
-                out.push(UnresolvedInstruction::Imm(Register::PC, label_out.clone()));
-                out.push(UnresolvedInstruction::Label(label_out.clone()));
+                out.push(UnresolvedInstruction::Imm(
+                    Register::PC,
+                    label_out.to_string(),
+                ));
+                out.push(UnresolvedInstruction::Label(label_out.to_string()));
             }
             ast::Statement::Declare(id, t, Some(expr)) => {
                 if scope.get(ctx, &id.0).is_some() {
@@ -136,9 +153,9 @@ pub(super) fn compile_block(
                     StackOp::Pop,
                 )));
                 out.push(UnresolvedInstruction::Instruction(Instruction::Add(
+                    Register::B,
                     Register::BP,
                     Register::Zero,
-                    Register::B,
                 )));
                 out.push(UnresolvedInstruction::Instruction(Instruction::AddImm(
                     Register::B,
@@ -196,6 +213,9 @@ pub(super) fn compile_block(
                                 Register::SP,
                                 StackOp::Pop,
                             )));
+                            if addr > 0xfff {
+                                todo!("address too big: {addr}");
+                            }
                             out.extend(load_address_to(addr, Register::B, Register::M));
                             write_value(&mut out, &tt, Register::C, Register::B);
                         }
@@ -215,24 +235,28 @@ pub(super) fn compile_block(
             ast::Statement::AssignDeref { lhs, rhs } => {
                 // TODO: check we can assign
                 let lhs_type = type_of(ctx, &scope, &lhs);
-                let compiled_addr = compile_expression(ctx, &mut scope, &lhs)?;
-                let compiled_value = compile_expression(ctx, &mut scope, &rhs)?;
-                out.extend(compiled_addr);
-                out.extend(compiled_value);
-                out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
-                    Register::B,
-                    Register::SP,
-                    StackOp::Pop,
-                )));
-                out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
-                    Register::C,
-                    Register::SP,
-                    StackOp::Pop,
-                )));
-                write_value(&mut out, &lhs_type, Register::B, Register::C);
+                if let Type::Pointer(pointed_type) = lhs_type {
+                    let compiled_addr = compile_expression(ctx, &mut scope, &lhs)?;
+                    let compiled_value = compile_expression(ctx, &mut scope, &rhs)?;
+                    out.extend(compiled_addr);
+                    out.extend(compiled_value);
+                    out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
+                        Register::B,
+                        Register::SP,
+                        StackOp::Pop,
+                    )));
+                    out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
+                        Register::C,
+                        Register::SP,
+                        StackOp::Pop,
+                    )));
+                    write_value(&mut out, &pointed_type, Register::B, Register::C);
+                } else {
+                    return Err(CompilerError::DerefInvalidType(lhs_type));
+                }
             }
             ast::Statement::AssignStructField { fields, rhs } => {
-                println!("asssign struct field: {fields:?} = {rhs}");
+                // println!("asssign struct field: {fields:?} = {rhs}");
                 let compiled_expr = compile_expression(ctx, &mut scope, &rhs)?;
                 out.extend(compiled_expr);
                 if fields.is_empty() {
@@ -295,25 +319,20 @@ pub(super) fn compile_body(
     ctx: &mut Context,
     statements: Vec<ast::Statement>,
     name: &str,
-    offset: u32,
     args: Vec<(ast::Identifier, ast::Type)>,
 ) -> Result<Block, CompilerError> {
-    let mut block = Block {
-        offset,
-        ..Block::default()
-    };
+    let mut block = Block { ..Block::default() };
     block
         .instructions
-        .push(UnresolvedInstruction::Label(Symbol::new(name)));
+        .push(UnresolvedInstruction::Label(name.to_string()));
     for (name, arg_type) in &args {
         block.define_arg(&name.0, &Type::from_ast(ctx, arg_type)?);
     }
     // function setup
     let local_count_sym = format!("__internal_{name}_local_count");
-    block.instructions.push(UnresolvedInstruction::AddImm(
-        Register::SP,
-        Symbol::new(&local_count_sym),
-    ));
+    block
+        .instructions
+        .push(UnresolvedInstruction::AddImm(Register::SP, local_count_sym));
     let cell = Rc::new(RefCell::new(block));
     let mut compiled = compile_block(ctx, BlockScope::new(cell.clone()), statements)?;
     {
@@ -332,9 +351,9 @@ pub(super) fn compile_body(
         block
             .instructions
             .push(UnresolvedInstruction::Instruction(Instruction::Add(
+                Register::SP,
                 Register::BP,
                 Register::Zero,
-                Register::SP,
             )));
         let offset = -4 - 2 * (args.len() as i8);
         block.instructions.push(UnresolvedInstruction::Instruction(
@@ -357,9 +376,9 @@ pub(super) fn compile_body(
         block
             .instructions
             .push(UnresolvedInstruction::Instruction(Instruction::Add(
+                Register::PC,
                 Register::C,
                 Register::Zero,
-                Register::PC,
             )));
         Ok(block)
     }

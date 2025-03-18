@@ -2,7 +2,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::compile::context::{Context, Global};
-use crate::compile::resolve::{Symbol, Type, UnresolvedInstruction};
+use crate::compile::resolve::{Symbol, Type};
+use simplevm::resolve::UnresolvedInstruction;
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -71,7 +72,6 @@ impl BlockScope {
     pub fn define_local(&mut self, s: &str, t: &Type) -> usize {
         let mut fn_block = self.parent_func.borrow_mut();
         let offset = fn_block.allocate_local_space(t);
-        println!("declare local: {s} {t} @ {offset:X}");
         self.locals.push(LocalDefinition::new(s, offset, t));
         offset
     }
@@ -123,7 +123,7 @@ impl Block {
         let mut offset = 0;
         for ins in &self.instructions {
             if let UnresolvedInstruction::Label(s) = ins {
-                ctx.define(s, function_offset + (offset as u32));
+                ctx.define(&Symbol::new(s), function_offset + (offset as u32));
             } else {
                 offset += 2;
             }

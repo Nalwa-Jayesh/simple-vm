@@ -156,6 +156,38 @@ pub enum BinOp {
     NotEqual,
 }
 
+impl BinOp {
+    pub fn get_precedence(&self) -> u32 {
+        match self {
+            Self::Add => 2,
+            Self::Subtract => 2,
+            Self::Multiply => 3,
+            Self::Mod => 3,
+            Self::Equal => 1,
+            Self::GreaterThan => 1,
+            Self::GreaterThanEqual => 1,
+            Self::LessThan => 1,
+            Self::LessThanEqual => 1,
+            Self::NotEqual => 1,
+        }
+    }
+
+    pub fn is_left_associative(&self) -> bool {
+        match self {
+            Self::Add => true,
+            Self::Subtract => true,
+            Self::Multiply => true,
+            Self::Mod => true,
+            Self::Equal => false,
+            Self::GreaterThan => false,
+            Self::GreaterThanEqual => false,
+            Self::LessThan => false,
+            Self::LessThanEqual => false,
+            Self::NotEqual => false,
+        }
+    }
+}
+
 impl fmt::Display for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -196,10 +228,12 @@ impl FromStr for BinOp {
 pub enum Expression {
     LiteralInt(i32),
     LiteralChar(char),
+    LiteralString(String),
     Variable(Vec<Identifier>),
     AddressOf(Vec<Identifier>),
     Deref(Box<Expression>),
     BinOp(Box<Expression>, Box<Expression>, BinOp),
+    // TODO: is an identifier the only thing we can call?
     FunctionCall(Identifier, Vec<Expression>),
     Bracketed(Box<Expression>),
     BuiltinSizeof(Type),
@@ -214,6 +248,7 @@ impl fmt::Display for Expression {
         match self {
             Self::LiteralInt(i) => write!(f, "{i}"),
             Self::LiteralChar(c) => write!(f, "'{c}'"),
+            Self::LiteralString(s) => write!(f, "\"{s}\""),
             Self::AddressOf(fields) => write!(
                 f,
                 "&{}",
@@ -226,7 +261,7 @@ impl fmt::Display for Expression {
             Self::Deref(i) => write!(f, "*{i}"),
             Self::BinOp(e0, e1, op) => write!(f, "{e0} {op} {e1}"),
             Self::Bracketed(e) => write!(f, "({e})"),
-            Self::ArrayDeref { lhs, index } => write!(f, "&{lhs} [{index}]"),
+            Self::ArrayDeref { lhs, index } => write!(f, "{lhs}[{index}]"),
             Self::BuiltinSizeof(t) => write!(f, "sizeof({t})"),
             Self::Variable(fields) => write!(
                 f,

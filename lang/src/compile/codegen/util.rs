@@ -1,9 +1,12 @@
-use simplevm::{Instruction, Literal12Bit, Literal7Bit, Nibble, Register, StackOp, TestOp};
+use simplevm::{
+    resolve::UnresolvedInstruction, Instruction, Literal12Bit, Literal7Bit, Nibble, Register,
+    StackOp, TestOp,
+};
 
 use crate::ast;
 use crate::compile::block::BlockVariable;
 use crate::compile::error::CompilerError;
-use crate::compile::resolve::{Type, UnresolvedInstruction};
+use crate::compile::resolve::Type;
 
 pub fn load_address_to(
     addr: usize,
@@ -51,9 +54,9 @@ pub fn binop_compare(out: &mut Vec<UnresolvedInstruction>, a: Register, b: Regis
         a, b, op,
     )));
     out.push(UnresolvedInstruction::Instruction(Instruction::Add(
-        Register::Zero,
-        Register::Zero,
         Register::C,
+        Register::Zero,
+        Register::Zero,
     )));
     out.push(UnresolvedInstruction::Instruction(Instruction::AddIf(
         Register::C,
@@ -74,9 +77,9 @@ pub fn assign_from_stack_to_local(out: &mut Vec<UnresolvedInstruction>, ty: &Typ
         StackOp::Pop,
     )));
     out.push(UnresolvedInstruction::Instruction(Instruction::Add(
+        Register::B,
         Register::BP,
         Register::Zero,
-        Register::B,
     )));
     out.push(UnresolvedInstruction::Instruction(Instruction::AddImm(
         Register::B,
@@ -87,9 +90,9 @@ pub fn assign_from_stack_to_local(out: &mut Vec<UnresolvedInstruction>, ty: &Typ
 
 pub fn load_local_addr_to(out: &mut Vec<UnresolvedInstruction>, offset: u8, reg: Register) {
     out.push(UnresolvedInstruction::Instruction(Instruction::Add(
+        reg,
         Register::BP,
         Register::Zero,
-        reg,
     )));
     out.push(UnresolvedInstruction::Instruction(Instruction::AddImm(
         reg,
@@ -104,9 +107,9 @@ pub fn assign_from_stack_to_arg(out: &mut Vec<UnresolvedInstruction>, index: u8)
         StackOp::Pop,
     )));
     out.push(UnresolvedInstruction::Instruction(Instruction::Add(
+        Register::B,
         Register::BP,
         Register::Zero,
-        Register::B,
     )));
     out.push(UnresolvedInstruction::Instruction(
         Instruction::AddImmSigned(
@@ -115,17 +118,17 @@ pub fn assign_from_stack_to_arg(out: &mut Vec<UnresolvedInstruction>, index: u8)
         ),
     ));
     out.push(UnresolvedInstruction::Instruction(Instruction::StoreWord(
+        Register::C,
         Register::B,
         Register::Zero,
-        Register::C,
     )));
 }
 
 pub fn load_arg_addr_to(out: &mut Vec<UnresolvedInstruction>, index: u8, reg: Register) {
     out.push(UnresolvedInstruction::Instruction(Instruction::Add(
+        reg,
         Register::BP,
         Register::Zero,
-        reg,
     )));
     out.push(UnresolvedInstruction::Instruction(
         Instruction::AddImmSigned(
@@ -144,20 +147,20 @@ pub fn write_value(
     match ty.size_bytes() {
         0 => (),
         1 => out.push(UnresolvedInstruction::Instruction(Instruction::StoreByte(
+            reg_value,
             reg_addr,
             Register::Zero,
-            reg_value,
         ))),
         2 => out.push(UnresolvedInstruction::Instruction(Instruction::StoreWord(
+            reg_value,
             reg_addr,
             Register::Zero,
-            reg_value,
         ))),
         n => panic!("uh oh we can't assign {n} bytes by value"),
     }
 }
 
-// Assume len fields >= 1
+// ASSUME len fields >= 1
 pub fn get_stack_field_offset(
     out: &mut Vec<UnresolvedInstruction>,
     fields: &[ast::Identifier],
@@ -166,6 +169,9 @@ pub fn get_stack_field_offset(
     target_register: Register,
 ) -> Result<(), CompilerError> {
     let head_name = fields.first().unwrap();
+
+    // check for special case of 1 field, as then we don't want to deref
+    // eg let *int b := 2; return b; <-- this needs to return 2
     if var_type.is_pointer() && fields.len() > 1 {
         match head_var {
             BlockVariable::Local(offset, _) => {
@@ -213,6 +219,10 @@ pub fn get_stack_field_offset(
         }
     };
 
+    if fields.len() == 1 {
+        return Ok(());
+    }
+
     let mut struct_fields = match var_type.clone() {
         Type::Struct(sf) => sf,
         Type::Pointer(t) => {
@@ -232,10 +242,6 @@ pub fn get_stack_field_offset(
             ));
         }
     };
-
-    if fields.len() == 1 {
-        return Ok(());
-    }
 
     let mut current_type = var_type.clone();
     for (i, field) in fields[1..].iter().enumerate() {
