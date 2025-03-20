@@ -22,6 +22,7 @@ where
 pub struct VM {
     registers: [u16; 8],
     flags: u16,
+    program_counter: u32,
     pub halt: bool,
     pub memory: MemoryMapper,
 }
@@ -70,6 +71,14 @@ impl Machine {
         self.vm.set_register(r, v)
     }
 
+    pub fn set_program_counter(&mut self, addr: u32) {
+        self.vm.set_program_counter(addr);
+    }
+
+    pub fn get_program_counter(&self) -> u32 {
+        self.vm.get_program_counter()
+    }
+
     pub fn set_flag(&mut self, flag: Flag, state: bool) {
         self.vm.set_flag(flag, state)
     }
@@ -98,20 +107,22 @@ impl VM {
         self.registers = [0; 8];
         self.flags = 0;
         self.halt = false;
+        self.program_counter = 0;
     }
 
     pub fn state(&self) -> String {
         format!(
-            "A: {} | B: {} | C: {} | M: {}
-SP: {} | PC: {} | BP: {}
-Flags: {:016b}",
+            "A: {} | B: {} | C: {} | D: {}
+SP: {} | M: {} | BP: {}
+PC @ {}, Flags: {:016b}",
             self.get_register(Register::A),
             self.get_register(Register::B),
             self.get_register(Register::C),
+            self.get_register(Register::D),
             self.get_register(Register::M),
             self.get_register(Register::SP),
-            self.get_register(Register::PC),
             self.get_register(Register::BP),
+            self.get_program_counter(),
             self.flags,
         )
     }
@@ -129,9 +140,15 @@ Flags: {:016b}",
             return;
         };
         self.registers[r as usize] = v;
-        if r == Register::PC {
-            self.set_flag(Flag::DidJump, true);
-        }
+    }
+
+    pub fn set_program_counter(&mut self, addr: u32) {
+        self.set_flag(Flag::DidJump, true);
+        self.program_counter = addr;
+    }
+
+    pub fn get_program_counter(&self) -> u32 {
+        self.program_counter
     }
 
     pub fn pop(&mut self, stack_pointer_register: Register) -> Result<u16, String> {
@@ -168,8 +185,8 @@ Flags: {:016b}",
         &mut self,
         signal_handlers: &HashMap<u8, Box<dyn SignalHandler>>,
     ) -> Result<(), String> {
-        let pc = self.get_register(Register::PC);
-        let instruction = self.memory.read2(pc as u32).map_err(|x| x.to_string())?;
+        let pc = self.get_program_counter();
+        let instruction = self.memory.read2(pc).map_err(|x| x.to_string())?;
         self.set_flag(Flag::DidJump, false);
         let op = Instruction::try_from(instruction)?;
         // println!("running {}", op);
@@ -230,7 +247,8 @@ Flags: {:016b}",
             }
             // immediates
             Instruction::AddImm(r, i) => {
-                self.set_register(r, self.get_register(r) + (i.value as u16));
+                let (res, _overflow) = self.get_register(r).overflowing_add(i.value as u16);
+                self.set_register(r, res);
                 Ok(())
             }
             Instruction::AddImmSigned(r, i) => {
@@ -238,10 +256,8 @@ Flags: {:016b}",
                 let imm_signed = i.as_signed();
                 unsafe {
                     let register_signed: i16 = std::mem::transmute(raw_register_value);
-                    self.set_register(
-                        r,
-                        std::mem::transmute(register_signed + (imm_signed as i16)),
-                    );
+                    let (res, _overflow) = register_signed.overflowing_add(imm_signed as i16);
+                    self.set_register(r, std::mem::transmute(res));
                 }
                 Ok(())
             }
@@ -375,6 +391,10 @@ Flags: {:016b}",
                         let b = self.pop(sp)?;
                         self.push(sp, a.wrapping_sub(b))?;
                     }
+                    StackOp::PushPC => {
+                        // TODO: what if bigger than u16?
+                        self.push(sp, self.program_counter as u16)?;
+                    }
                 };
                 Ok(())
             }
@@ -383,6 +403,46 @@ Flags: {:016b}",
                 let addr = base - ((word_offset.value as u16) * 2);
                 let stack_value = self.memory.read2(addr as u32).map_err(|x| x.to_string())?;
                 self.set_register(tgt, stack_value);
+                Ok(())
+            }
+            Instruction::Jump(addr) => {
+                self.program_counter = (addr.value as u32) << 4;
+                self.set_flag(Flag::DidJump, true);
+                Ok(())
+            }
+            Instruction::JumpRegister(reg_page, reg_tgt) => {
+                let page = self.get_register(reg_page);
+                let addr = self.get_register(reg_tgt);
+                let full_addr = ((page as u32) << 16) + (addr as u32);
+                self.program_counter = full_addr;
+                self.set_flag(Flag::DidJump, true);
+                Ok(())
+            }
+            Instruction::BranchIf(offset) => {
+                if self.test_flag(Flag::Compare) {
+                    self.program_counter = self
+                        .program_counter
+                        .wrapping_add_signed(offset.as_signed() as i32);
+                    self.set_flag(Flag::DidJump, true);
+                    self.set_flag(Flag::Compare, false);
+                };
+                Ok(())
+            }
+            Instruction::Branch(offset) => {
+                self.program_counter = self
+                    .program_counter
+                    .wrapping_add_signed(offset.as_signed() as i32);
+                self.set_flag(Flag::DidJump, true);
+                Ok(())
+            }
+            Instruction::BranchRegisterIf(reg_offset, lit_offset) => {
+                if self.test_flag(Flag::Compare) {
+                    let offset =
+                        (self.get_register(reg_offset) as i32) + (lit_offset.as_signed() as i32);
+                    self.program_counter = self.program_counter.wrapping_add_signed(offset);
+                    self.set_flag(Flag::DidJump, true);
+                    self.set_flag(Flag::Compare, false);
+                };
                 Ok(())
             }
             Instruction::System(Register::Zero, reg_arg, signal) => {
@@ -408,7 +468,7 @@ Flags: {:016b}",
             }
         }?;
         if !self.test_flag(Flag::DidJump) {
-            self.set_register(Register::PC, pc + 2);
+            self.program_counter += 2;
             self.set_flag(Flag::DidJump, false);
         };
         Ok(())

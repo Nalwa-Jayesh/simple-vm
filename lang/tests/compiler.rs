@@ -1,6 +1,6 @@
 use simplevm::Register::*;
 mod common;
-use common::*;
+use common::run_program;
 
 #[test]
 fn inline_asm() {
@@ -12,8 +12,8 @@ void main() {
 }
 
 asm! addnums(int a, int b) {
-    LoadStackOffset A SP 3    
-    LoadStackOffset B SP 4    
+    LoadStackOffset A SP 3
+    LoadStackOffset B SP 4
     Add A B A
 }
 

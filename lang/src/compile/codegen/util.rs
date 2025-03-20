@@ -3,8 +3,11 @@ use simplevm::{
     StackOp, TestOp,
 };
 
+use log::trace;
+
 use crate::ast;
 use crate::compile::block::BlockVariable;
+use crate::compile::codegen::expression::{ExprRes, ExpressionDestination, State};
 use crate::compile::error::CompilerError;
 use crate::compile::resolve::Type;
 
@@ -39,53 +42,179 @@ pub fn load_address_to(
     out
 }
 
-pub fn binop_compare(out: &mut Vec<UnresolvedInstruction>, a: Register, b: Register, op: TestOp) {
-    out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
-        a,
-        Register::SP,
-        StackOp::Pop,
-    )));
-    out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
-        b,
-        Register::SP,
-        StackOp::Pop,
-    )));
-    out.push(UnresolvedInstruction::Instruction(Instruction::Test(
-        a, b, op,
-    )));
-    out.push(UnresolvedInstruction::Instruction(Instruction::Add(
-        Register::C,
-        Register::Zero,
-        Register::Zero,
-    )));
-    out.push(UnresolvedInstruction::Instruction(Instruction::AddIf(
-        Register::C,
-        Register::Zero,
-        Nibble::new_checked(1).unwrap(),
-    )));
-    out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
-        Register::C,
-        Register::SP,
-        StackOp::Push,
-    )));
+pub fn binop_compare(
+    mut out: Vec<UnresolvedInstruction>,
+    a: &ExprRes,
+    b: &ExprRes,
+    op: TestOp,
+    mut state: State,
+) -> Result<ExprRes, CompilerError> {
+    let ops_on_stack = a.destination == ExpressionDestination::Stack
+        && b.destination == ExpressionDestination::Stack;
+    if ops_on_stack {
+        state.reserve_temporaries(2);
+        let (t0, t1) = state.get_temp_pair().unwrap();
+        out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
+            t0,
+            Register::SP,
+            StackOp::Pop,
+        )));
+        out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
+            t1,
+            Register::SP,
+            StackOp::Pop,
+        )));
+        out.push(UnresolvedInstruction::Instruction(Instruction::Test(
+            t0, t1, op,
+        )));
+        state.reserve_temporaries(1);
+        if let Some(rt) = state.get_free() {
+            out.push(UnresolvedInstruction::Instruction(Instruction::Add(
+                rt,
+                Register::Zero,
+                Register::Zero,
+            )));
+            out.push(UnresolvedInstruction::Instruction(Instruction::AddIf(
+                rt,
+                Register::Zero,
+                Nibble::new_checked(1).unwrap(),
+            )));
+            state.set_intermediate(rt);
+            Ok(ExprRes::from_instructions(
+                out,
+                state,
+                ExpressionDestination::Register(rt),
+            ))
+        } else {
+            out.push(UnresolvedInstruction::Instruction(Instruction::Add(
+                t0,
+                Register::Zero,
+                Register::Zero,
+            )));
+            out.push(UnresolvedInstruction::Instruction(Instruction::AddIf(
+                t0,
+                Register::Zero,
+                Nibble::new_checked(1).unwrap(),
+            )));
+            out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
+                t0,
+                Register::SP,
+                StackOp::Push,
+            )));
+            Ok(ExprRes::from_instructions_stack(out, state))
+        }
+    } else {
+        let r0 = if let ExpressionDestination::Register(r) = a.destination {
+            r
+        } else {
+            let rt = state.get_temp().unwrap();
+            out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
+                rt,
+                Register::SP,
+                StackOp::Pop,
+            )));
+            rt
+        };
+        let r1 = if let ExpressionDestination::Register(r) = b.destination {
+            r
+        } else {
+            let rt = state.get_temp().unwrap();
+            out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
+                rt,
+                Register::SP,
+                StackOp::Pop,
+            )));
+            rt
+        };
+        // RHS ==> r0
+        out.push(UnresolvedInstruction::Instruction(Instruction::Test(
+            r1, r0, op,
+        )));
+        if let Some(rt) = state.get_free() {
+            out.push(UnresolvedInstruction::Instruction(Instruction::Add(
+                rt,
+                Register::Zero,
+                Register::Zero,
+            )));
+            out.push(UnresolvedInstruction::Instruction(Instruction::AddIf(
+                rt,
+                Register::Zero,
+                Nibble::new_checked(1).unwrap(),
+            )));
+            state.set_intermediate(rt);
+            Ok(ExprRes::from_instructions(
+                out,
+                state,
+                ExpressionDestination::Register(rt),
+            ))
+        } else {
+            let rt = state.get_temp().unwrap();
+            out.push(UnresolvedInstruction::Instruction(Instruction::Add(
+                rt,
+                Register::Zero,
+                Register::Zero,
+            )));
+            out.push(UnresolvedInstruction::Instruction(Instruction::AddIf(
+                rt,
+                Register::Zero,
+                Nibble::new_checked(1).unwrap(),
+            )));
+            out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
+                rt,
+                Register::SP,
+                StackOp::Push,
+            )));
+            Ok(ExprRes::from_instructions_stack(out, state))
+        }
+    }
 }
 
-pub fn assign_from_stack_to_local(out: &mut Vec<UnresolvedInstruction>, ty: &Type, offset: u8) {
+pub fn assign_from_stack_to_local(
+    out: &mut Vec<UnresolvedInstruction>,
+    ty: &Type,
+    offset: u8,
+    state: &mut State,
+) -> Register {
+    let (value_reg, addr_reg) = state.get_temp_pair().unwrap();
     out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
-        Register::C,
+        value_reg,
         Register::SP,
         StackOp::Pop,
     )));
     out.push(UnresolvedInstruction::Instruction(Instruction::Add(
-        Register::B,
+        addr_reg,
         Register::BP,
         Register::Zero,
     )));
     out.push(UnresolvedInstruction::Instruction(Instruction::AddImm(
-        Register::B,
+        addr_reg,
         Literal7Bit::new_checked(offset).unwrap(),
     )));
-    write_value(out, ty, Register::C, Register::B);
+    write_value(out, ty, value_reg, addr_reg);
+    value_reg
+}
+
+pub fn assign_from_register_to_local(
+    out: &mut Vec<UnresolvedInstruction>,
+    reg: Register,
+    ty: &Type,
+    offset: u8,
+    state: &mut State,
+) {
+    let addr_reg = state.get_temp().unwrap();
+    trace!(
+        "assign from register to local: local_offset={offset}, from_reg={reg}, addr_reg={addr_reg}"
+    );
+    out.push(UnresolvedInstruction::Instruction(Instruction::Add(
+        addr_reg,
+        Register::BP,
+        Register::Zero,
+    )));
+    out.push(UnresolvedInstruction::Instruction(Instruction::AddImm(
+        addr_reg,
+        Literal7Bit::new_checked(offset).unwrap(),
+    )));
+    write_value(out, ty, reg, addr_reg);
 }
 
 pub fn load_local_addr_to(out: &mut Vec<UnresolvedInstruction>, offset: u8, reg: Register) {
@@ -100,28 +229,59 @@ pub fn load_local_addr_to(out: &mut Vec<UnresolvedInstruction>, offset: u8, reg:
     )));
 }
 
-pub fn assign_from_stack_to_arg(out: &mut Vec<UnresolvedInstruction>, index: u8) {
-    out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
-        Register::C,
-        Register::SP,
-        StackOp::Pop,
-    )));
+pub fn assign_from_register_to_arg(
+    out: &mut Vec<UnresolvedInstruction>,
+    index: u8,
+    r: Register,
+    state: &mut State,
+) {
+    let addr_reg = state.get_temp().unwrap();
     out.push(UnresolvedInstruction::Instruction(Instruction::Add(
-        Register::B,
+        addr_reg,
         Register::BP,
         Register::Zero,
     )));
     out.push(UnresolvedInstruction::Instruction(
         Instruction::AddImmSigned(
-            Register::B,
+            addr_reg,
             Literal7Bit::from_signed(-2 * (index as i8 + 3)).unwrap(),
         ),
     ));
     out.push(UnresolvedInstruction::Instruction(Instruction::StoreWord(
-        Register::C,
-        Register::B,
+        r,
+        addr_reg,
         Register::Zero,
     )));
+}
+
+pub fn assign_from_stack_to_arg(
+    out: &mut Vec<UnresolvedInstruction>,
+    index: u8,
+    state: &mut State,
+) -> Register {
+    let (value_reg, addr_reg) = state.get_temp_pair().unwrap();
+    out.push(UnresolvedInstruction::Instruction(Instruction::Stack(
+        value_reg,
+        Register::SP,
+        StackOp::Pop,
+    )));
+    out.push(UnresolvedInstruction::Instruction(Instruction::Add(
+        addr_reg,
+        Register::BP,
+        Register::Zero,
+    )));
+    out.push(UnresolvedInstruction::Instruction(
+        Instruction::AddImmSigned(
+            addr_reg,
+            Literal7Bit::from_signed(-2 * (index as i8 + 3)).unwrap(),
+        ),
+    ));
+    out.push(UnresolvedInstruction::Instruction(Instruction::StoreWord(
+        value_reg,
+        addr_reg,
+        Register::Zero,
+    )));
+    value_reg
 }
 
 pub fn load_arg_addr_to(out: &mut Vec<UnresolvedInstruction>, index: u8, reg: Register) {

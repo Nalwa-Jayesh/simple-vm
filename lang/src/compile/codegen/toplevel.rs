@@ -36,16 +36,16 @@ pub fn compile(
             StackOp::Push,
         )),
         UnresolvedInstruction::Instruction(Instruction::Stack(
-            Register::PC,
+            Register::Zero,
             Register::SP,
-            StackOp::Push,
+            StackOp::PushPC,
         )),
         UnresolvedInstruction::Instruction(Instruction::Add(
             Register::BP,
             Register::SP,
             Register::Zero,
         )),
-        UnresolvedInstruction::Imm(Register::PC, "main".to_string()),
+        UnresolvedInstruction::Jump("main".to_string()),
         UnresolvedInstruction::Instruction(Instruction::Imm(
             Register::C,
             Literal12Bit::new_checked(0xf0).unwrap(),
@@ -181,13 +181,9 @@ pub fn compile(
                         Register::C,
                         Literal7Bit::new_checked(6).unwrap(),
                     )));
-                block
-                    .instructions
-                    .push(UnresolvedInstruction::Instruction(Instruction::Add(
-                        Register::PC,
-                        Register::C,
-                        Register::Zero,
-                    )));
+                block.instructions.push(UnresolvedInstruction::Instruction(
+                    Instruction::JumpRegister(Register::Zero, Register::C),
+                ));
 
                 // TODO: copy this for function defs rather than lookup in compile_body
                 for (name, arg_type) in args {
@@ -207,11 +203,20 @@ pub fn compile(
 
     let mut program_offset = ctx.get_code_section_start();
     // function offset allocation pass
-    for (name, block) in ctx.functions.clone() {
+    for (name, block) in ctx.functions.iter_mut() {
+        // TODO: this is a hack
+        if name != "_init" {
+            while program_offset % 16 != 0 {
+                program_offset += 1;
+            }
+        }
         let block_size: u32 = block.instructions.iter().map(|x| x.size()).sum();
         offsets.insert(name.to_string(), program_offset);
-        block.register_labels(&mut ctx, program_offset);
+        block.offset = program_offset;
         program_offset += block_size;
+    }
+    for (_, block) in ctx.functions.clone() {
+        block.register_labels(&mut ctx, block.offset);
     }
     for (name, offset) in offsets {
         ctx.define(&Symbol::new(&name), offset);

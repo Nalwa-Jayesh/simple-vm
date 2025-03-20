@@ -31,7 +31,7 @@ impl fmt::Display for Error {
 
 type MacroFunc = fn(&mut PreProcessor, input: Vec<&str>) -> Result<Vec<String>, String>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Macro {
     Func(MacroFunc),
     Subst(Vec<String>),
@@ -53,7 +53,7 @@ impl fmt::Display for Variable {
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Data<T> {
     pub offset: u32,
     pub mode: SectionMode,
@@ -70,13 +70,13 @@ impl<T> Data<T> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Chunk<T> {
     Raw(Vec<u8>),
     Lines(Vec<T>),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PreProcessor {
     entrypoint: u16,
     sections: HashMap<String, Data<ProcessedLine>>,
@@ -88,14 +88,14 @@ pub struct PreProcessor {
 }
 
 // TODO(phy1um): use unresolvedinstrction abstraction from lang
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProcessedLine {
     source_line_number: usize,
     line: Vec<ProcessedLinePart>,
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ProcessedLinePart {
     Body(String),
     Variable(String),
@@ -225,6 +225,26 @@ impl PreProcessor {
         Ok(out)
     }
 
+    fn dealias_instruction(h: ProcessedLinePart) -> ProcessedLinePart {
+        if let ProcessedLinePart::Body(ins) = h {
+            ProcessedLinePart::Body(
+                match ins.to_uppercase().as_str() {
+                    "ADDIMMS" => "ADDIMMSIGNED",
+                    "SHIFTL" => "SHIFTLEFT",
+                    "SHIFTRG" => "SHIFTRIGHTLOGICAL",
+                    "SHIFTRA" => "SHIFTRIGHTARITHMETIC",
+                    "LOADSTACK" => "LOADSTACKOFFSET",
+                    "JUMPR" => "JUMPREGISTER",
+                    "BRANCHIFR" => "BRANCHREGISTERIF",
+                    x => x,
+                }
+                .to_string(),
+            )
+        } else {
+            h
+        }
+    }
+
     fn try_parse_unresolved_instruction(
         first: &ProcessedLinePart,
         parts: &[ProcessedLinePart],
@@ -292,9 +312,11 @@ impl PreProcessor {
                             // skip comments
                             Ok(None)
                         } else if p.len() > 1 {
-                            if let Some(ur) =
-                                Self::try_parse_unresolved_instruction(head, p.get(1..).unwrap())
-                            {
+                            let dealiased = Self::dealias_instruction(head.clone());
+                            if let Some(ur) = Self::try_parse_unresolved_instruction(
+                                &dealiased,
+                                p.get(1..).unwrap(),
+                            ) {
                                 Ok(Some(ur))
                             } else {
                                 let instruction_str = p
@@ -466,7 +488,10 @@ impl TryFrom<PreProcessor> for BinaryFile {
                     Chunk::Lines(ls) => {
                         for line in ls {
                             let ins_res = line
-                                .resolve(&processor.labels)
+                                .resolve(
+                                    section.offset + (section_data.len() as u32),
+                                    &processor.labels,
+                                )
                                 .map_err(|e| Error::ResolveLine(line.to_string(), e))?;
                             if let Some(ins) = ins_res {
                                 section_data.extend_from_slice(&ins.encode_u16().to_le_bytes());

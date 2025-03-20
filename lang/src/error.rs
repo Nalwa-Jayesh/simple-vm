@@ -1,8 +1,13 @@
+use crate::character::StrState;
+use crate::language::lex::{LexError, LexedToken};
+use crate::language::tokenize::Token;
+use crate::language::State;
 use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct ParseError {
-    context: String,
+    line_number: usize,
+    position_in_line: usize,
     tag: Option<String>,
     kind: ParseErrorKind,
 }
@@ -95,11 +100,52 @@ impl<T: Clone> ConfidenceError<T> {
 }
 
 impl ParseError {
-    pub fn new(ctx: &str, kind: ParseErrorKind) -> Self {
+    pub fn from_str_state(s: &StrState<'_>, kind: ParseErrorKind) -> Self {
         Self {
-            context: ctx.to_owned(),
-            kind,
+            line_number: s.line_number,
+            position_in_line: s.position_in_line,
             tag: None,
+            kind,
+        }
+    }
+
+    pub(crate) fn from_state(s: &State<'_>, kind: ParseErrorKind) -> Self {
+        if let Some(head) = s.first() {
+            Self {
+                line_number: head.line_number,
+                position_in_line: head.position_in_line,
+                tag: None,
+                kind,
+            }
+        } else {
+            Self::end_of_input()
+        }
+    }
+
+    pub fn from_token(t: &LexedToken, kind: ParseErrorKind) -> Self {
+        Self {
+            line_number: t.line_number,
+            position_in_line: t.position_in_line,
+            tag: None,
+            kind,
+        }
+    }
+
+    pub(crate) fn from_token_prelex(t: &Token, kind: ParseErrorKind) -> Self {
+        Self {
+            line_number: t.line_number,
+            position_in_line: t.position_in_line,
+            tag: None,
+            kind,
+        }
+    }
+
+    pub fn end_of_input() -> Self {
+        Self {
+            line_number: 0,
+            position_in_line: 0,
+            tag: Some("EOF".to_string()),
+            kind: ParseErrorKind::EndOfInput,
         }
     }
 
@@ -108,11 +154,21 @@ impl ParseError {
         self
     }
 
-    pub fn from_errs(ctx: &str, errs: Vec<ParseError>) -> Self {
-        Self {
-            context: ctx.to_owned(),
-            kind: ParseErrorKind::Errors(errs),
-            tag: None,
+    pub fn from_errs(errs: Vec<ParseError>) -> Self {
+        if let Some(err) = errs.first() {
+            Self {
+                line_number: err.line_number,
+                position_in_line: err.position_in_line,
+                kind: ParseErrorKind::Errors(errs),
+                tag: None,
+            }
+        } else {
+            Self {
+                line_number: 0,
+                position_in_line: 0,
+                kind: ParseErrorKind::Errors(errs),
+                tag: None,
+            }
         }
     }
 }
@@ -120,20 +176,26 @@ impl ParseError {
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(tag) = &self.tag {
-            write!(f, "{}:!!{}!!, @ {}", self.kind, tag, self.context)
+            write!(
+                f,
+                "@{}:{} {}:!!{}!!",
+                self.line_number, self.position_in_line, self.kind, tag
+            )
         } else {
-            write!(f, "{}, @ {}", self.kind, self.context)
+            write!(
+                f,
+                "@{}:{} {}",
+                self.line_number, self.position_in_line, self.kind
+            )
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum ParseErrorKind {
-    ExpectedChar { expected: char, got: char },
-    UnexpectedChar(String, char),
     ExpectedToken(String),
-    CharFailedPredicate(char, String),
     ExpectedType,
+    ExpectedIdentifier,
     ExpectedBinop,
     ExpectedExpression,
     ExpectedExpressionLHS,
@@ -141,6 +203,11 @@ pub enum ParseErrorKind {
     ExpectedTopLevel,
     ExpectedArrayDeref,
     EndOfInput,
+    ExpectedInt,
+    ExpectedChar,
+    ExpectedString,
+    LexError(LexError),
+    InputTail,
     Errors(Vec<ParseError>),
     Numeric(std::num::ParseIntError),
 }
@@ -148,12 +215,8 @@ pub enum ParseErrorKind {
 impl fmt::Display for ParseErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ExpectedChar { expected, got } => write!(f, "expected '{expected}', got '{got}'"),
-            Self::UnexpectedChar(s, c) => write!(f, "char '{c}' not in \"{s}\""),
+            Self::ExpectedChar => write!(f, "expected char"),
             Self::ExpectedToken(s) => write!(f, "expected token \"{s}\""),
-            Self::CharFailedPredicate(c, name) => {
-                write!(f, "char '{c}' failed predicate \"{name}\"")
-            }
             Self::ExpectedType => write!(f, "expected type (eg int, void)"),
             Self::ExpectedBinop => write!(f, "expected binary operator (eg +, *, >=)"),
             Self::ExpectedExpression => write!(f, "expected expression"),
@@ -161,7 +224,12 @@ impl fmt::Display for ParseErrorKind {
             Self::ExpectedStatement => write!(f, "expected statement"),
             Self::ExpectedTopLevel => write!(f, "expected function definition etc."),
             Self::ExpectedArrayDeref => write!(f, "expected array deref"),
+            Self::ExpectedIdentifier => write!(f, "expected identifier"),
+            Self::ExpectedInt => write!(f, "expected integer"),
+            Self::ExpectedString => write!(f, "expected string"),
             Self::EndOfInput => write!(f, "end of input"),
+            Self::LexError(e) => write!(f, "lex error: {e:?}"),
+            Self::InputTail => write!(f, "unexpected tail at end of input"),
             Self::Numeric(e) => write!(f, "invalid number: {e:?}"),
             Self::Errors(v) => write!(
                 f,

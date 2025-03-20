@@ -262,7 +262,7 @@ impl JSMachine {
                 .m
                 .vm
                 .memory
-                .read2(self.m.get_register(Register::PC) as u32)
+                .read2(self.m.get_program_counter() as u32)
                 .unwrap();
             let _ = f.call1(&this, &JsValue::from(ins));
         };
@@ -307,9 +307,34 @@ impl JSMachine {
     #[wasm_bindgen]
     pub fn load_binary(&mut self, bin: &[u8]) -> Result<(), String> {
         let bin_file = BinaryFile::from_bytes(bin)?;
+        log(format!("loaded bin: {bin_file:?}"));
         bin_file.load_to_vm(&mut self.m)?;
-        self.m.set_register(Register::PC, bin_file.entrypoint);
+        self.m.set_program_counter(bin_file.entrypoint as u32);
         Ok(())
+    }
+
+    #[wasm_bindgen(js_name = getMemoryMap)]
+    pub fn get_memory_map(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for (start, size, _) in self.m.vm.memory.mapped.iter() {
+            out.push(format!("section @{start}->{size}"));
+        }
+        out
+    }
+
+    #[wasm_bindgen(js_name = isHalt)]
+    pub fn is_halt(&self) -> bool {
+        self.m.is_halt()
+    }
+
+    #[wasm_bindgen(js_name = getProgramCounter)]
+    pub fn get_program_counter(&self) -> u32 {
+        self.m.get_program_counter()
+    }
+
+    #[wasm_bindgen(js_name = setProgramCounter)]
+    pub fn set_program_counter(&mut self, addr: u32) {
+        self.m.set_program_counter(addr);
     }
 }
 
@@ -383,7 +408,12 @@ pub fn code_to_instruction_text(code_bytes: &[u8], offset: usize) -> Result<Vec<
     unsafe {
         let (_, ins, _) = code_bytes.align_to::<u16>();
         for (index, raw_instruction) in ins.iter().enumerate() {
-            let instruction_parsed = Instruction::try_from(*raw_instruction)?;
+            let instruction_parsed = Instruction::try_from(*raw_instruction).map_err(|e| {
+                format!(
+                    "instruction {raw_instruction} (@ {}): {e}",
+                    (index * 2) + offset
+                )
+            })?;
             out.push(format!("{:05}: {instruction_parsed}", (index * 2) + offset));
         }
     }

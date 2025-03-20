@@ -95,6 +95,16 @@ pub enum Instruction {
     Stack(Register, Register, StackOp),
     #[opcode(0x15)]
     LoadStackOffset(Register, Register, Nibble),
+    #[opcode(0x16)]
+    Jump(Literal10Bit),
+    #[opcode(0x17)]
+    JumpRegister(Register, Register),
+    #[opcode(0x18)]
+    BranchIf(Literal10Bit),
+    #[opcode(0x19)]
+    Branch(Literal10Bit),
+    #[opcode(0x1a)]
+    BranchRegisterIf(Register, Literal7Bit),
     // Syscalls
     #[opcode(0x1f)]
     System(Register, Register, Nibble),
@@ -113,11 +123,11 @@ mod test {
             AddImm(C, Literal7Bit::new_checked(0x20)?),
             AddImmSigned(A, Literal7Bit::new_checked(0x7)?),
             Add(C, B, A),
-            Sub(PC, BP, SP),
-            Mul(PC, BP, SP),
-            And(PC, BP, SP),
-            Or(PC, BP, SP),
-            Xor(PC, BP, SP),
+            Sub(D, BP, SP),
+            Mul(D, BP, SP),
+            And(D, BP, SP),
+            Or(D, BP, SP),
+            Xor(D, BP, SP),
             Mod(C, A, Zero),
             ShiftLeft(M, BP, Nibble::new_checked(0xe)?),
             ShiftRightLogical(M, BP, Nibble::new_checked(0xe)?),
@@ -127,9 +137,9 @@ mod test {
             StoreWord(C, A, M),
             StoreByte(C, A, M),
             SetAndSave(A, B, C),
-            AddAndSave(PC, B, C),
+            AddAndSave(D, B, C),
             Test(BP, A, TestOp::Gte),
-            AddIf(PC, A, Nibble::new_checked(0x0)?),
+            AddIf(D, A, Nibble::new_checked(0x0)?),
             Stack(B, SP, StackOp::Dup),
             LoadStackOffset(A, BP, Nibble::new_checked(0x3)?),
             System(A, B, Nibble::new_checked(0x3)?),
