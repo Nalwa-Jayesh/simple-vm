@@ -1,9 +1,7 @@
-[package]
-name = "simplevm"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+resolver = "2"
 
-[dependencies]
-
-[[bin]]
-name = "vm"
+members = [
+    "vm",
+    "lang",
+]
